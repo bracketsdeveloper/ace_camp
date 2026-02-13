@@ -15,19 +15,18 @@ import type { Campaign } from "@/components/admin/campaigns/types";
 export function ProductsTable() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data: products = [] } = useQuery<Product[]>({ 
-    queryKey: ["/api/products-admin"] 
+  const { data: products = [] } = useQuery<Product[]>({
+    queryKey: ["/api/products-admin"],
   });
-  
-  const { data: categories = [] } = useQuery<Category[]>({ 
-    queryKey: ["/api/categories"] 
+
+  const { data: categories = [] } = useQuery<Category[]>({
+    queryKey: ["/api/categories"],
   });
-  
-  // Get campaigns for each product
-  const { data: productCampaignsData = {} } = useQuery<Record<string, Campaign[]>>({ 
-    queryKey: ["/api/admin/product-campaigns"] 
+
+  const { data: productCampaignsData = {} } = useQuery<Record<string, Campaign[]>>({
+    queryKey: ["/api/admin/product-campaigns"],
   });
-  
+
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
@@ -41,11 +40,12 @@ export function ProductsTable() {
       qc.invalidateQueries({ queryKey: ["/api/admin/product-campaigns"] });
       toast({ title: "Product deleted" });
     },
-    onError: (e: any) => toast({ 
-      title: "Delete failed", 
-      description: e.message, 
-      variant: "destructive" 
-    }),
+    onError: (e: any) =>
+      toast({
+        title: "Delete failed",
+        description: e.message,
+        variant: "destructive",
+      }),
   });
 
   const openEditModal = (product: Product) => {
@@ -90,6 +90,10 @@ export function ProductsTable() {
                   <TableHead>SKU</TableHead>
                   <TableHead>Price</TableHead>
                   <TableHead>Stock</TableHead>
+
+                  {/* ✅ NEW */}
+                  <TableHead>Bulk Buy</TableHead>
+
                   <TableHead>Categories</TableHead>
                   <TableHead>Campaigns</TableHead>
                   <TableHead>Backup</TableHead>
@@ -100,12 +104,22 @@ export function ProductsTable() {
               <TableBody>
                 {products.map((p) => {
                   const productCampaigns = getProductCampaigns(p.id);
+                  const isBulk = Boolean((p as any).bulkBuy);
+
                   return (
                     <TableRow key={p.id}>
                       <TableCell>{p.name}</TableCell>
                       <TableCell className="font-mono">{p.sku}</TableCell>
                       <TableCell>₹{p.price}</TableCell>
                       <TableCell>{p.stock}</TableCell>
+
+                      {/* ✅ NEW */}
+                      <TableCell>
+                        <Badge variant={isBulk ? "default" : "secondary"}>
+                          {isBulk ? "Yes" : "No"}
+                        </Badge>
+                      </TableCell>
+
                       <TableCell>
                         {(() => {
                           const assigned = resolveProductCategories(p);
@@ -121,12 +135,13 @@ export function ProductsTable() {
                           );
                         })()}
                       </TableCell>
+
                       <TableCell>
                         {productCampaigns.length > 0 ? (
                           <div className="flex flex-wrap gap-1">
                             {productCampaigns.map((campaign) => (
-                              <Badge 
-                                key={`${p.id}-${campaign.id}`} 
+                              <Badge
+                                key={`${p.id}-${campaign.id}`}
                                 variant="secondary"
                                 className="flex items-center gap-1"
                               >
@@ -139,19 +154,18 @@ export function ProductsTable() {
                           "—"
                         )}
                       </TableCell>
+
                       <TableCell>{labelForProduct(p.backupProductId)}</TableCell>
+
                       <TableCell>
                         <Badge variant={p.isActive ? "default" : "destructive"}>
                           {p.isActive ? "Yes" : "No"}
                         </Badge>
                       </TableCell>
+
                       <TableCell>
                         <div className="flex flex-wrap gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openEditModal(p)}
-                          >
+                          <Button size="sm" variant="outline" onClick={() => openEditModal(p)}>
                             Edit
                           </Button>
                           <Button

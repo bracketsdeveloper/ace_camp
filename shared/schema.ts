@@ -39,9 +39,7 @@ export const domainWhitelist = pgTable("domain_whitelist", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-/* =========================================================
-   EMPLOYEES
-   =======================================================*/
+// EMPLOYEES
 export const employees = pgTable("employees", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   employeeId: text("employee_id").unique(),
@@ -52,8 +50,20 @@ export const employees = pgTable("employees", {
   points: integer("points").notNull().default(0),
   loginAttempts: integer("login_attempts").default(0),
   isLocked: boolean("is_locked").default(false),
+
+  bulkBuyAllowed: boolean("bulk_buy_allowed").default(false),
+
+  // ✅ NEW: role
+  role: text("role").notNull().default("user"), // user | admin | procurement
+
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+
+export const employeeRoleSchema = z.enum(["user", "admin", "procurement"]);
+export type EmployeeRole = z.infer<typeof employeeRoleSchema>;
+
+
 
 /* =========================================================
    PRODUCTS
@@ -73,10 +83,13 @@ export const products = pgTable("products", {
   categoryIds: text("category_ids").array().notNull().default(sql`ARRAY[]::text[]`),
   csrSupport: boolean("csr_support").default(false),
 
-  // ✅ UPDATED: price slabs include minQty, maxQty, price
+  // ✅ price slabs
   priceSlabs: json("price_slabs")
     .$type<Array<{ minQty: number; maxQty: number | null; price: string }>>()
     .default([]),
+
+  // ✅ NEW: bulk buy flag
+  bulkBuy: boolean("bulk_buy").default(false),
 
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -196,6 +209,72 @@ export const blogs = pgTable("blogs", {
 });
 
 /* =========================================================
+   BULK BUY ACCESS (Allowlist)
+   =======================================================*/
+export const bulkBuyAccess = pgTable("bulk_buy_access", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: text("email").notNull().unique(),
+  isActive: boolean("is_active").default(true),
+  department: text("department"),
+  designation: text("designation"),
+  isProcurement: boolean("is_procurement").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+/* =========================================================
+   BULK BUY CART ITEMS
+   =======================================================*/
+export const bulkBuyCartItems = pgTable("bulk_buy_cart_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  employeeId: varchar("employee_id").references(() => employees.id).notNull(),
+  productId: varchar("product_id").references(() => products.id).notNull(),
+  selectedColor: text("selected_color"),
+  quantity: integer("quantity").notNull().default(1),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+/* =========================================================
+   BULK BUY REQUESTS
+   =======================================================*/
+export const bulkBuyRequests = pgTable("bulk_buy_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  requestId: text("request_id").notNull().unique(),
+  employeeId: varchar("employee_id").references(() => employees.id).notNull(),
+  status: text("status").notNull().default("pending_approval"), // pending_approval|approved|rejected
+  deliveryMethod: text("delivery_method").default("office"),
+  deliveryAddress: text("delivery_address"),
+
+  items: json("items")
+    .$type<
+      Array<{
+        productId: string;
+        name: string;
+        sku?: string;
+        selectedColor?: string | null;
+        quantity: number;
+        unitPrice: number;
+        lineTotal: number;
+      }>
+    >()
+    .notNull()
+    .default([]),
+
+  totalAmount: decimal("total_amount", { precision: 12, scale: 2 })
+    .notNull()
+    .default("0.00"),
+
+  requesterNote: text("requester_note"),
+  procurementNote: text("procurement_note"),
+
+  approvedByEmployeeId: varchar("approved_by_employee_id"),
+  approvedAt: timestamp("approved_at"),
+
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+/* =========================================================
    ZOD INSERT SCHEMAS
    =======================================================*/
 export const insertCategorySchema = createInsertSchema(categories).pick({
@@ -222,9 +301,13 @@ export const insertEmployeeSchema = createInsertSchema(employees).pick({
   lastName: true,
   email: true,
   points: true,
+
+  // ✅ NEW
+  bulkBuyAllowed: true,
 });
 
-// ✅ UPDATED: slab schema includes maxQty
+
+// ✅ slab schema includes maxQty
 const priceSlabSchema = z.object({
   minQty: z.number().int().min(1, "Min Qty must be >= 1"),
   maxQty: z.number().int().min(1).nullable().default(null),
@@ -252,8 +335,11 @@ export const insertProductSchema = z.object({
   categoryIds: z.array(z.string()).default([]),
   csrSupport: z.boolean().default(false),
 
-  // ✅ UPDATED
+  // ✅ slabs
   priceSlabs: z.array(priceSlabSchema).default([]),
+
+  // ✅ NEW
+  bulkBuy: z.boolean().default(false),
 });
 
 export const insertOrderSchema = createInsertSchema(orders)
@@ -268,7 +354,7 @@ export const insertOrderSchema = createInsertSchema(orders)
     metadata: z
       .object({
         usedPoints: z.number().optional(),
-        unitPrice: z.number().optional(), // ✅ helpful for audit
+        unitPrice: z.number().optional(),
         copayInr: z.number().optional().nullable(),
         paymentId: z.string().optional().nullable(),
         phonepeOrderId: z.string().optional().nullable(),
@@ -321,6 +407,14 @@ export const insertBlogSchema = z.object({
   imageUrl: z.string().optional().nullable().default(null),
   author: z.string().optional().default("Admin"),
   isPublished: z.boolean().default(false),
+});
+
+export const insertBulkBuyAccessSchema = z.object({
+  email: z.string().email("Valid email is required"),
+  isActive: z.boolean().default(true),
+  department: z.string().optional().nullable().default(null),
+  designation: z.string().optional().nullable().default(null),
+  isProcurement: z.boolean().default(false),
 });
 
 /* =========================================================
@@ -382,3 +476,9 @@ export type CampaignProduct = typeof campaignProducts.$inferSelect;
 
 export type InsertBlog = z.infer<typeof insertBlogSchema>;
 export type Blog = typeof blogs.$inferSelect;
+
+export type InsertBulkBuyAccess = z.infer<typeof insertBulkBuyAccessSchema>;
+export type BulkBuyAccess = typeof bulkBuyAccess.$inferSelect;
+
+export type BulkBuyCartItem = typeof bulkBuyCartItems.$inferSelect;
+export type BulkBuyRequest = typeof bulkBuyRequests.$inferSelect;

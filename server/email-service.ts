@@ -17,7 +17,11 @@ export class EmailService {
     this.transporter = nodemailer.createTransport(config);
   }
 
-  async sendOTP(to: string, code: string, companyName: string = "Virtusa"): Promise<boolean> {
+  async sendOTP(
+    to: string,
+    code: string,
+    companyName: string = "Virtusa"
+  ): Promise<boolean> {
     try {
       const html = `
         <!DOCTYPE html>
@@ -70,7 +74,9 @@ export class EmailService {
       `;
 
       const mailOptions = {
-        from: process.env.SMTP_FROM || `"${companyName} Portal" <noreply@yourcompany.com>`,
+        from:
+          process.env.SMTP_FROM ||
+          `"${companyName} Portal" <noreply@yourcompany.com>`,
         to,
         subject: `Your ${companyName} Portal Verification Code`,
         text,
@@ -81,7 +87,47 @@ export class EmailService {
       console.log(`OTP email sent to ${to}: ${result.messageId}`);
       return true;
     } catch (error) {
-      console.error('Failed to send OTP email:', error);
+      console.error("Failed to send OTP email:", error);
+      return false;
+    }
+  }
+
+  /**
+   * ✅ Generic email helper (used by Bulk Buy module)
+   */
+  async sendMail(opts: {
+    to: string | string[];
+    cc?: string | string[];
+    bcc?: string | string[];
+    subject: string;
+    html?: string;
+    text?: string;
+    fromName?: string;
+  }): Promise<boolean> {
+    try {
+      const fromName = opts.fromName || "Portal";
+      const from =
+        process.env.SMTP_FROM || `"${fromName}" <noreply@yourcompany.com>`;
+
+      const mailOptions = {
+        from,
+        to: opts.to,
+        cc: opts.cc,
+        bcc: opts.bcc,
+        subject: opts.subject,
+        text: opts.text,
+        html: opts.html,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log(
+        `Mail sent: subject="${opts.subject}" to=${JSON.stringify(
+          opts.to
+        )} msgId=${result.messageId}`
+      );
+      return true;
+    } catch (error) {
+      console.error("Failed to send email:", error);
       return false;
     }
   }
@@ -89,21 +135,21 @@ export class EmailService {
   async verifyConnection(): Promise<boolean> {
     try {
       await this.transporter.verify();
-      console.log('SMTP connection verified');
+      console.log("SMTP connection verified");
       return true;
     } catch (error) {
-      console.error('SMTP connection failed:', error);
+      console.error("SMTP connection failed:", error);
       return false;
     }
   }
 }
 
 export const emailService = new EmailService({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: process.env.SMTP_SECURE === 'true',
+  host: process.env.SMTP_HOST || "smtp.gmail.com",
+  port: parseInt(process.env.SMTP_PORT || "587"),
+  secure: process.env.SMTP_SECURE === "true",
   auth: {
-    user: process.env.SMTP_USER || '',
-    pass: process.env.SMTP_PASS || '',
+    user: process.env.SMTP_USER || "",
+    pass: process.env.SMTP_PASS || "",
   },
 });

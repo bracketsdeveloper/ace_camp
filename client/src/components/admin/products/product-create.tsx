@@ -25,21 +25,18 @@ const defaultNewProduct: Partial<Product> = {
   csrSupport: false,
   backupProductId: null,
   categoryIds: [],
-  priceSlabs: [], // ✅ UPDATED
+  priceSlabs: [],
+  bulkBuy: false, // ✅ NEW
 };
 
 function normalizeSlabs(slabs: PriceSlab[]): PriceSlab[] {
   const cleaned = slabs
     .map((s) => {
       const minQty = Number((s as any).minQty || 0);
-
-      // allow "" in UI -> treat as null
       const rawMax = (s as any).maxQty;
       const maxQty =
         rawMax === "" || rawMax === undefined || rawMax === null ? null : Number(rawMax);
-
       const price = String((s as any).price ?? "").trim();
-
       return { minQty, maxQty, price };
     })
     .filter((s) => Number.isFinite(s.minQty) && s.minQty > 0 && s.price !== "");
@@ -65,7 +62,6 @@ export function ProductCreate() {
   const [packagesInput, setPackagesInput] = useState<string>("");
   const [specificationsInput, setSpecificationsInput] = useState<string>("");
 
-  // ✅ UPDATED slab state
   const [priceSlabs, setPriceSlabs] = useState<PriceSlab[]>([]);
 
   const { data: products = [] } = useQuery<Product[]>({
@@ -78,7 +74,6 @@ export function ProductCreate() {
 
   const createProductMutation = useMutation({
     mutationFn: async (body: Partial<Product>) => {
-      console.log("Submitting product data:", JSON.stringify(body, null, 2));
       const res = await apiRequest("POST", `/api/admin/products`, body);
       return res.json();
     },
@@ -91,7 +86,7 @@ export function ProductCreate() {
       setColorsInput("");
       setPackagesInput("");
       setSpecificationsInput("");
-      setPriceSlabs([]); // reset
+      setPriceSlabs([]);
     },
     onError: (e: any) =>
       toast({
@@ -117,23 +112,19 @@ export function ProductCreate() {
   const slabValidation = useMemo(() => {
     const normalized = normalizeSlabs(priceSlabs);
 
-    // price must be valid number >= 0
     const badPrice = normalized.find((s) => {
       const p = Number(s.price);
       return !Number.isFinite(p) || p < 0;
     });
 
-    // maxQty must be null or >= minQty
     const badRange = normalized.find((s) => {
       if (s.maxQty === null) return false;
       return !Number.isFinite(s.maxQty) || s.maxQty < s.minQty;
     });
 
-    // only one open-ended slab
     const openEndedCount = normalized.filter((s) => s.maxQty === null).length;
     const multipleOpenEnded = openEndedCount > 1;
 
-    // overlap check (treat null max as Infinity)
     let hasOverlap = false;
     for (let i = 0; i < normalized.length; i++) {
       const a = normalized[i];
@@ -195,7 +186,6 @@ export function ProductCreate() {
       return;
     }
 
-    // slab validations
     if (slabValidation.badRange) {
       toast({
         title: "Invalid slab range",
@@ -238,16 +228,14 @@ export function ProductCreate() {
       backupProductId: newProduct.backupProductId || null,
       isActive: newProduct.isActive !== false,
       csrSupport: newProduct.csrSupport || false,
+      bulkBuy: Boolean(newProduct.bulkBuy), // ✅ NEW
       images: newProductImages,
       colors: colorsInput.split(",").map((s) => s.trim()).filter(Boolean),
       packagesInclude: packagesInput.split("\n").map((s) => s.trim()).filter(Boolean),
       specifications: specificationsInput.trim(),
-
-      // ✅ UPDATED
       priceSlabs: slabValidation.normalized,
     };
 
-    console.log("Final product data to submit:", productData);
     createProductMutation.mutate(productData);
   };
 
@@ -284,6 +272,26 @@ export function ProductCreate() {
             />
             <p className="text-xs text-muted-foreground mt-1">
               Used when slab pricing is not applicable (or as the default tier).
+            </p>
+          </div>
+
+          {/* ✅ NEW: Bulk Buy flag */}
+          <div className="md:col-span-2">
+            <Label>Bulk Buy</Label>
+            <div className="flex items-center gap-2 mt-2">
+              <input
+                id="bulkBuy"
+                type="checkbox"
+                className="h-4 w-4"
+                checked={Boolean(newProduct.bulkBuy)}
+                onChange={(e) => setNewProduct((p) => ({ ...p, bulkBuy: e.target.checked }))}
+              />
+              <Label htmlFor="bulkBuy" className="text-sm">
+                Show this product in Bulk Buy section
+              </Label>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              If enabled, this product will be visible in the Bulk Buy portal (restricted users only).
             </p>
           </div>
 
@@ -425,14 +433,13 @@ export function ProductCreate() {
             />
           </div>
 
-          {/* ✅ UPDATED: Slab Pricing */}
+          {/* Slab Pricing */}
           <div className="md:col-span-2">
             <div className="flex items-center justify-between">
               <div>
                 <Label>Slab Pricing (optional)</Label>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Define price tiers by quantity range. Example: 5–10 → price applies when qty is between 5 and 10.
-                  Leave Max Qty empty for open-ended (e.g., 51+).
+                  Define price tiers by quantity range. Leave Max Qty empty for open-ended (e.g., 51+).
                 </p>
               </div>
               <Button type="button" variant="outline" onClick={addSlabRow}>
@@ -516,10 +523,6 @@ export function ProductCreate() {
                     {slabValidation.badPrice && <div>• Invalid price in one or more slabs (must be number ≥ 0).</div>}
                   </div>
                 )}
-
-                <p className="text-xs text-muted-foreground">
-                  Tip: When user selects a quantity, system should pick the slab whose range contains the quantity.
-                </p>
               </div>
             )}
           </div>
@@ -538,17 +541,14 @@ export function ProductCreate() {
 
           {/* Specifications */}
           <div className="md:col-span-2">
-            <Label htmlFor="product-specifications">Specifications (plain text with line breaks)</Label>
+            <Label htmlFor="product-specifications">Specifications</Label>
             <Textarea
               id="product-specifications"
               value={specificationsInput}
               onChange={(e) => setSpecificationsInput(e.target.value)}
-              placeholder="Enter detailed specifications here...&#10;You can use multiple lines&#10;And any format you want"
+              placeholder="Enter detailed specifications..."
               rows={4}
             />
-            <p className="text-sm text-muted-foreground mt-1">
-              Enter specifications as plain text. Each line will be preserved.
-            </p>
           </div>
 
           {/* Backup Product */}
@@ -607,9 +607,6 @@ export function ProductCreate() {
                 Available for CSR Support
               </Label>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              If checked, this product will appear in CSR Support page
-            </p>
           </div>
         </div>
 

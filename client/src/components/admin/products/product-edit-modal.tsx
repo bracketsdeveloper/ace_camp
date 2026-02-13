@@ -86,7 +86,7 @@ export function ProductEditModal({ open, onClose, product, products, categories 
   const [specificationsInput, setSpecificationsInput] = useState<string>("");
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
 
-  // ✅ UPDATED
+  // ✅ Slab pricing rows
   const [priceSlabs, setPriceSlabs] = useState<PriceSlabRow[]>([{ minQty: "", maxQty: "", price: "" }]);
 
   const { data: productCampaigns = [] } = useQuery<Campaign[]>({
@@ -103,6 +103,7 @@ export function ProductEditModal({ open, onClose, product, products, categories 
         stock: product.stock,
         isActive: product.isActive,
         csrSupport: product.csrSupport || false,
+        bulkBuy: Boolean((product as any).bulkBuy), // ✅ NEW
         backupProductId: product.backupProductId,
         categoryIds: product.categoryIds || [],
       });
@@ -119,7 +120,7 @@ export function ProductEditModal({ open, onClose, product, products, categories 
 
       setSelectedCategoryIds(product.categoryIds || []);
 
-      // ✅ UPDATED: slab pricing init (min/max/price)
+      // ✅ slab pricing init
       const existingSlabs = (product as any)?.priceSlabs;
       if (Array.isArray(existingSlabs) && existingSlabs.length > 0) {
         const mapped: PriceSlabRow[] = existingSlabs.map((s: any) => ({
@@ -208,12 +209,15 @@ export function ProductEditModal({ open, onClose, product, products, categories 
       backupProductId: formData.backupProductId || null,
       isActive: formData.isActive !== false,
       csrSupport: formData.csrSupport || false,
+
+      // ✅ NEW
+      bulkBuy: Boolean((formData as any).bulkBuy),
+
       images: images,
       colors: colorsInput.split(",").map((s) => s.trim()).filter(Boolean),
       packagesInclude: packagesInput.split("\n").filter(Boolean),
       specifications: specificationsInput.trim(),
 
-      // ✅ UPDATED
       priceSlabs: normalizedSlabs,
     };
 
@@ -279,7 +283,27 @@ export function ProductEditModal({ open, onClose, product, products, categories 
               </p>
             </div>
 
-            {/* ✅ UPDATED Slab Pricing */}
+            {/* ✅ NEW: Bulk Buy */}
+            <div className="md:col-span-2">
+              <Label>Bulk Buy</Label>
+              <div className="flex items-center gap-2 mt-2">
+                <input
+                  id="edit-bulkBuy"
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={Boolean((formData as any).bulkBuy)}
+                  onChange={(e) => setFormData({ ...formData, bulkBuy: e.target.checked } as any)}
+                />
+                <Label htmlFor="edit-bulkBuy" className="text-sm">
+                  Show this product in Bulk Buy section
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                If enabled, this product will appear in the Bulk Buy portal (restricted users only).
+              </p>
+            </div>
+
+            {/* Slab Pricing */}
             <div className="md:col-span-2">
               <div className="flex items-center justify-between">
                 <Label>Slab Pricing (optional)</Label>
@@ -350,8 +374,6 @@ export function ProductEditModal({ open, onClose, product, products, categories 
                   </div>
                 ))}
               </div>
-
-              
             </div>
 
             {/* Categories */}

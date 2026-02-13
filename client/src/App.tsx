@@ -18,6 +18,7 @@ import OccasionalCampaigns from "./pages/occasional-campaigns";
 import BlogPage from "./pages/blog";
 import BlogDetailPage from "./pages/blog-detail";
 import CSRSupportPage from "./pages/csr-support";
+import BulkBuyPage from "./pages/bulk-buy";
 
 function Routes() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -71,6 +72,10 @@ function Routes() {
       // Blogs should be PUBLIC 
       <Route path="/blog" component={BlogPage} />
       <Route path="/blog/:slug" component={BlogDetailPage} />
+
+      <Route path="/bulk-buy">
+        {isAuthenticated ? <BulkBuyPage /> : <Login />}
+      </Route>
 
 
       <Route path="/">

@@ -30,4 +30,5 @@ export type Product = {
 
   // ✅ NEW
   priceSlabs?: PriceSlab[];
+  bulkBuy?: boolean;
 };

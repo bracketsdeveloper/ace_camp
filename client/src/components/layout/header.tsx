@@ -26,7 +26,7 @@ type CartItem = {
 };
 
 export function Header() {
-  const { employee, logout } = useAuth();
+  const { employee, token, logout } = useAuth(); // ✅ make sure token exists in useAuth()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [location, setLocation] = useLocation();
 
@@ -41,6 +41,25 @@ export function Header() {
 
   const cartItemCount = useMemo(() => cartItems.length, [cartItems]);
 
+  // ✅ BulkBuy eligibility check (same as BulkBuyPage)
+  const { data: bulkBuyMe } = useQuery({
+    queryKey: ["/api/bulkbuy/me"],
+    enabled: !!token, // only when logged in
+    queryFn: async () => {
+      const r = await fetch("/api/bulkbuy/me", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      // If endpoint fails, just hide the tab
+      if (!r.ok) return { eligible: false };
+      return r.json();
+    },
+    retry: false,
+  });
+
+  const canSeeBulkBuy = !!employee && (
+    employee.bulkBuyAllowed === true || bulkBuyMe?.eligible === true
+  );
+
   const companyName = branding?.companyName || "TechCorp";
   const primary = branding?.primaryColor || "#1e40af";
   const logoUrl = branding?.logoUrl || null;
@@ -48,10 +67,15 @@ export function Header() {
   const navLinks = [
     { id: "brand-store", label: "Brand Store", path: "/dashboard" },
     { id: "special-occasions", label: "Special Occasions", path: "/special-occasions" },
-    { id: "bulk-buy", label: "CSR Support", path: "/csr" },
+    { id: "csr-support", label: "CSR Support", path: "/csr" },
     { id: "csr-blog", label: "Blog", path: "/blog" },
-
+    { id: "bulk-buy", label: "Bulk Buy", path: "/bulk-buy" },
   ];
+
+  // ✅ hide Bulk Buy tab if not eligible
+  const visibleNavLinks = useMemo(() => {
+    return navLinks.filter((l) => (l.id === "bulk-buy" ? canSeeBulkBuy : true));
+  }, [canSeeBulkBuy]);
 
   const handleLogout = () => {
     logout();
@@ -77,8 +101,9 @@ export function Header() {
                 )}
               </Link>
             </div>
+
             <nav className="hidden md:flex items-center space-x-4">
-              {navLinks.map((link) => (
+              {visibleNavLinks.map((link) => (
                 <Button
                   key={link.id}
                   variant="ghost"
@@ -110,7 +135,7 @@ export function Header() {
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      fontSize: "0.75rem"
+                      fontSize: "0.75rem",
                     }}
                   >
                     {cartItemCount}
@@ -134,9 +159,7 @@ export function Header() {
               <p className="text-sm text-gray-600" data-testid="text-employee-id">
                 {employee?.employeeId}
               </p>
-              <p className="text-sm text-gray-600">
-                Points: {employee?.points ?? 0}
-              </p>
+              <p className="text-sm text-gray-600">Points: {employee?.points ?? 0}</p>
             </div>
 
             <Button
@@ -169,7 +192,7 @@ export function Header() {
       {isMobileMenuOpen && (
         <div className="md:hidden border-t border-gray-200 bg-white">
           <nav className="p-4 space-y-4">
-            {navLinks.map((link) => (
+            {visibleNavLinks.map((link) => (
               <Button
                 key={link.id}
                 variant="ghost"
@@ -182,6 +205,7 @@ export function Header() {
                 {link.label}
               </Button>
             ))}
+
             <div className="px-4 py-3 border-b border-gray-200">
               <p className="font-medium text-gray-900">
                 {employee?.firstName} {employee?.lastName}

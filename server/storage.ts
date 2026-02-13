@@ -13,6 +13,12 @@ import {
   campaignProducts,
   domainWhitelist,
   blogs,
+
+  // ✅ NEW bulk buy tables
+  bulkBuyAccess,
+  bulkBuyCartItems,
+  bulkBuyRequests,
+
   type Employee,
   type InsertEmployee,
   type Product,
@@ -34,6 +40,9 @@ import {
   type InsertDomainWhitelist,
   type Blog,
   type InsertBlog,
+  type BulkBuyAccess,
+  type InsertBulkBuyAccess,
+  type BulkBuyRequest,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -61,7 +70,7 @@ export interface IStorage {
   createCampaign(campaign: InsertCampaign): Promise<Campaign>;
   updateCampaign(id: string, updates: Partial<Campaign>): Promise<Campaign | undefined>;
   deleteCampaign(id: string): Promise<boolean>;
-  
+
   // Campaign Products
   getCampaignProducts(campaignId: string): Promise<{ product: Product; campaignProduct: CampaignProduct }[]>;
   addProductToCampaign(campaignId: string, productId: string): Promise<CampaignProduct>;
@@ -121,6 +130,43 @@ export interface IStorage {
   updateBlog(id: string, updates: Partial<Blog>): Promise<Blog | undefined>;
   deleteBlog(id: string): Promise<boolean>;
   incrementBlogViews(id: string): Promise<void>;
+
+  // ✅ BULK BUY ACCESS
+  getBulkBuyAccessByEmail(email: string): Promise<BulkBuyAccess | undefined>;
+  upsertBulkBuyAccess(rec: InsertBulkBuyAccess): Promise<BulkBuyAccess>;
+  getProcurementRecipients(): Promise<string[]>;
+
+  // ✅ BULK BUY PRODUCTS
+  getBulkBuyProducts(): Promise<Product[]>;
+
+  // ✅ BULK BUY CART
+  getBulkBuyCartItems(employeeId: string): Promise<{ id: string; employeeId: string; productId: string; selectedColor: string | null; quantity: number; createdAt: Date | null }[]>;
+  addBulkBuyCartItem(employeeId: string, productId: string, selectedColor: string | null, quantity: number): Promise<any>;
+  updateBulkBuyCartItem(id: string, updates: { quantity?: number }): Promise<any | undefined>;
+  removeBulkBuyCartItem(id: string): Promise<boolean>;
+  clearBulkBuyCart(employeeId: string): Promise<void>;
+
+  // ✅ BULK BUY REQUESTS
+  createBulkBuyRequest(input: {
+    employeeId: string;
+    deliveryMethod: "office" | "delivery";
+    deliveryAddress?: string | null;
+    requesterNote?: string | null;
+    items: Array<{
+      productId: string;
+      name: string;
+      sku?: string;
+      selectedColor?: string | null;
+      quantity: number;
+      unitPrice: number;
+      lineTotal: number;
+    }>;
+    totalAmount: number;
+  }): Promise<BulkBuyRequest>;
+
+  getBulkBuyRequestsByEmployeeId(employeeId: string): Promise<BulkBuyRequest[]>;
+  getAllBulkBuyRequests(): Promise<BulkBuyRequest[]>;
+  updateBulkBuyRequest(id: string, updates: Partial<BulkBuyRequest>): Promise<BulkBuyRequest | undefined>;
 }
 
 class DrizzleStorage implements IStorage {
@@ -131,7 +177,9 @@ class DrizzleStorage implements IStorage {
   }
 
   async getAllCategories() {
-    return db.select().from(categories)
+    return db
+      .select()
+      .from(categories)
       .where(eq(categories.isActive, true))
       .orderBy(desc(categories.sortOrder), desc(categories.createdAt));
   }
@@ -167,7 +215,9 @@ class DrizzleStorage implements IStorage {
   }
 
   async getActiveDomainWhitelist() {
-    return db.select().from(domainWhitelist)
+    return db
+      .select()
+      .from(domainWhitelist)
       .where(eq(domainWhitelist.isActive, true))
       .orderBy(desc(domainWhitelist.createdAt));
   }
@@ -178,7 +228,8 @@ class DrizzleStorage implements IStorage {
   }
 
   async updateDomainWhitelist(id: string, updates: Partial<DomainWhitelist>) {
-    const rows = await db.update(domainWhitelist)
+    const rows = await db
+      .update(domainWhitelist)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(domainWhitelist.id, id))
       .returning();
@@ -191,15 +242,15 @@ class DrizzleStorage implements IStorage {
   }
 
   async checkDomainWhitelisted(email: string): Promise<{ isWhitelisted: boolean; domain: DomainWhitelist | null }> {
-    const emailDomain = email.split('@')[1]?.toLowerCase();
+    const emailDomain = email.split("@")[1]?.toLowerCase();
     if (!emailDomain) return { isWhitelisted: false, domain: null };
 
     const domains = await this.getActiveDomainWhitelist();
-    const matchedDomain = domains.find(d => emailDomain === d.domain.toLowerCase());
-    
+    const matchedDomain = domains.find((d) => emailDomain === d.domain.toLowerCase());
+
     return {
       isWhitelisted: !!matchedDomain,
-      domain: matchedDomain || null
+      domain: matchedDomain || null,
     };
   }
 
@@ -219,8 +270,11 @@ class DrizzleStorage implements IStorage {
   }
 
   async updateCampaign(id: string, updates: Partial<Campaign>) {
-    const rows = await db.update(campaigns).set({ ...updates, updatedAt: new Date() })
-      .where(eq(campaigns.id, id)).returning();
+    const rows = await db
+      .update(campaigns)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(campaigns.id, id))
+      .returning();
     return rows[0];
   }
 
@@ -245,7 +299,9 @@ class DrizzleStorage implements IStorage {
   }
 
   async getPublishedBlogs() {
-    return db.select().from(blogs)
+    return db
+      .select()
+      .from(blogs)
       .where(eq(blogs.isPublished, true))
       .orderBy(desc(blogs.publishedAt));
   }
@@ -256,7 +312,8 @@ class DrizzleStorage implements IStorage {
   }
 
   async updateBlog(id: string, updates: Partial<Blog>) {
-    const rows = await db.update(blogs)
+    const rows = await db
+      .update(blogs)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(blogs.id, id))
       .returning();
@@ -269,9 +326,7 @@ class DrizzleStorage implements IStorage {
   }
 
   async incrementBlogViews(id: string) {
-    await db.update(blogs)
-      .set({ views: dsql`${blogs.views} + 1` })
-      .where(eq(blogs.id, id));
+    await db.update(blogs).set({ views: dsql`${blogs.views} + 1` }).where(eq(blogs.id, id));
   }
 
   // Campaign Products
@@ -284,34 +339,23 @@ class DrizzleStorage implements IStorage {
       .from(campaignProducts)
       .where(eq(campaignProducts.campaignId, campaignId))
       .innerJoin(products, eq(campaignProducts.productId, products.id));
-    
-    return rows.map(row => ({
+
+    return rows.map((row) => ({
       product: row.product,
       campaignProduct: row.campaignProduct,
     }));
   }
 
   async addProductToCampaign(campaignId: string, productId: string) {
-    // Check if already exists
     const existing = await db
       .select()
       .from(campaignProducts)
-      .where(
-        and(
-          eq(campaignProducts.campaignId, campaignId),
-          eq(campaignProducts.productId, productId)
-        )
-      )
+      .where(and(eq(campaignProducts.campaignId, campaignId), eq(campaignProducts.productId, productId)))
       .limit(1);
-    
-    if (existing[0]) {
-      return existing[0];
-    }
-    
-    const rows = await db
-      .insert(campaignProducts)
-      .values({ campaignId, productId })
-      .returning();
+
+    if (existing[0]) return existing[0];
+
+    const rows = await db.insert(campaignProducts).values({ campaignId, productId }).returning();
     return rows[0];
   }
 
@@ -322,17 +366,15 @@ class DrizzleStorage implements IStorage {
 
   async getProductCampaigns(productId: string) {
     const rows = await db
-      .select({
-        campaign: campaigns,
-      })
+      .select({ campaign: campaigns })
       .from(campaignProducts)
       .where(eq(campaignProducts.productId, productId))
       .innerJoin(campaigns, eq(campaignProducts.campaignId, campaigns.id));
-    
-    return rows.map(row => row.campaign);
+
+    return rows.map((row) => row.campaign);
   }
 
-  // Products with categories
+  // Products
   async getProduct(id: string) {
     const rows = await db.select().from(products).where(eq(products.id, id)).limit(1);
     return rows[0];
@@ -350,12 +392,7 @@ class DrizzleStorage implements IStorage {
     return db
       .select()
       .from(products)
-      .where(
-        and(
-          eq(products.isActive, true),
-          dsql`${categoryId} = ANY(${products.categoryIds})`
-        )
-      )
+      .where(and(eq(products.isActive, true), dsql`${categoryId} = ANY(${products.categoryIds})`))
       .orderBy(desc(products.createdAt));
   }
 
@@ -381,11 +418,7 @@ class DrizzleStorage implements IStorage {
   }
 
   async getEmployeeByEmployeeId(employeeId: string) {
-    const rows = await db
-      .select()
-      .from(employees)
-      .where(eq(employees.employeeId, employeeId))
-      .limit(1);
+    const rows = await db.select().from(employees).where(eq(employees.employeeId, employeeId)).limit(1);
     return rows[0];
   }
 
@@ -476,9 +509,7 @@ class DrizzleStorage implements IStorage {
   // Sessions
   async getSession(token: string) {
     const rows = await db.select().from(sessions).where(eq(sessions.token, token)).limit(1);
-    const sess = rows[0];
-    if (!sess) return undefined;
-    return sess;
+    return rows[0];
   }
 
   async createSession(employeeId: string) {
@@ -508,10 +539,7 @@ class DrizzleStorage implements IStorage {
   async updateBranding(updates: Partial<Branding>) {
     const current = await this.getBranding();
     if (!current) {
-      const rows = await db
-        .insert(brandingTable)
-        .values({ ...updates, updatedAt: new Date() })
-        .returning();
+      const rows = await db.insert(brandingTable).values({ ...updates, updatedAt: new Date() }).returning();
       return rows[0];
     }
     const rows = await db
@@ -526,12 +554,7 @@ class DrizzleStorage implements IStorage {
   async createOTP(rec: { email: string; code: string; expiresAt: Date; metadata?: any }) {
     const rows = await db
       .insert(otps)
-      .values({
-        email: rec.email,
-        code: rec.code,
-        expiresAt: rec.expiresAt,
-        metadata: rec.metadata ?? null,
-      })
+      .values({ email: rec.email, code: rec.code, expiresAt: rec.expiresAt, metadata: rec.metadata ?? null })
       .returning();
     return rows[0];
   }
@@ -548,6 +571,159 @@ class DrizzleStorage implements IStorage {
 
   async markOTPAsUsed(id: string) {
     await db.update(otps).set({ usedAt: new Date() }).where(eq(otps.id, id));
+  }
+
+  /* =========================================================
+     ✅ BULK BUY: Access Allowlist
+     =======================================================*/
+  async getBulkBuyAccessByEmail(email: string) {
+    const rows = await db.select().from(bulkBuyAccess).where(eq(bulkBuyAccess.email, email)).limit(1);
+    return rows[0];
+  }
+
+  async upsertBulkBuyAccess(rec: InsertBulkBuyAccess) {
+    const email = String(rec.email || "").trim().toLowerCase();
+    const existing = await this.getBulkBuyAccessByEmail(email);
+
+    if (existing) {
+      const rows = await db
+        .update(bulkBuyAccess)
+        .set({
+          ...rec,
+          email,
+          updatedAt: new Date(),
+        })
+        .where(eq(bulkBuyAccess.id, existing.id))
+        .returning();
+      return rows[0];
+    }
+
+    const rows = await db
+      .insert(bulkBuyAccess)
+      .values({
+        ...rec,
+        email,
+        updatedAt: new Date(),
+      })
+      .returning();
+    return rows[0];
+  }
+
+  async getProcurementRecipients(): Promise<string[]> {
+    const rows = await db
+      .select()
+      .from(bulkBuyAccess)
+      .where(and(eq(bulkBuyAccess.isActive, true), eq(bulkBuyAccess.isProcurement, true)));
+    return rows.map((r) => r.email);
+  }
+
+  /* =========================================================
+     ✅ BULK BUY: Products
+     =======================================================*/
+  async getBulkBuyProducts() {
+    return db
+      .select()
+      .from(products)
+      .where(and(eq(products.isActive, true), eq(products.bulkBuy, true)))
+      .orderBy(desc(products.createdAt));
+  }
+
+  /* =========================================================
+     ✅ BULK BUY: Cart
+     =======================================================*/
+  async getBulkBuyCartItems(employeeId: string) {
+    return db.select().from(bulkBuyCartItems).where(eq(bulkBuyCartItems.employeeId, employeeId));
+  }
+
+  async addBulkBuyCartItem(employeeId: string, productId: string, selectedColor: string | null, quantity: number) {
+    const rows = await db
+      .insert(bulkBuyCartItems)
+      .values({
+        employeeId,
+        productId,
+        selectedColor: selectedColor ?? null,
+        quantity,
+      })
+      .returning();
+    return rows[0];
+  }
+
+  async updateBulkBuyCartItem(id: string, updates: { quantity?: number }) {
+    const rows = await db.update(bulkBuyCartItems).set(updates).where(eq(bulkBuyCartItems.id, id)).returning();
+    return rows[0];
+  }
+
+  async removeBulkBuyCartItem(id: string) {
+    const res = await db.delete(bulkBuyCartItems).where(eq(bulkBuyCartItems.id, id));
+    return res.rowCount ? res.rowCount > 0 : true;
+  }
+
+  async clearBulkBuyCart(employeeId: string) {
+    await db.delete(bulkBuyCartItems).where(eq(bulkBuyCartItems.employeeId, employeeId));
+  }
+
+  /* =========================================================
+     ✅ BULK BUY: Requests
+     =======================================================*/
+  async createBulkBuyRequest(input: {
+    employeeId: string;
+    deliveryMethod: "office" | "delivery";
+    deliveryAddress?: string | null;
+    requesterNote?: string | null;
+    items: Array<{
+      productId: string;
+      name: string;
+      sku?: string;
+      selectedColor?: string | null;
+      quantity: number;
+      unitPrice: number;
+      lineTotal: number;
+    }>;
+    totalAmount: number;
+  }) {
+    const year = new Date().getFullYear();
+    const [{ c }] = await db.select({ c: dsql<number>`count(*)` }).from(bulkBuyRequests);
+    const next = Number(c) + 1;
+    const requestId = `BBR-${year}-${String(next).padStart(4, "0")}`;
+
+    const rows = await db
+      .insert(bulkBuyRequests)
+      .values({
+        requestId,
+        employeeId: input.employeeId,
+        status: "pending_approval",
+        deliveryMethod: input.deliveryMethod,
+        deliveryAddress: input.deliveryAddress ?? null,
+        requesterNote: input.requesterNote ?? null,
+        items: input.items,
+        totalAmount: String(input.totalAmount.toFixed(2)),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    return rows[0];
+  }
+
+  async getBulkBuyRequestsByEmployeeId(employeeId: string) {
+    return db
+      .select()
+      .from(bulkBuyRequests)
+      .where(eq(bulkBuyRequests.employeeId, employeeId))
+      .orderBy(desc(bulkBuyRequests.createdAt));
+  }
+
+  async getAllBulkBuyRequests() {
+    return db.select().from(bulkBuyRequests).orderBy(desc(bulkBuyRequests.createdAt));
+  }
+
+  async updateBulkBuyRequest(id: string, updates: Partial<BulkBuyRequest>) {
+    const rows = await db
+      .update(bulkBuyRequests)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(bulkBuyRequests.id, id))
+      .returning();
+    return rows[0];
   }
 }
 

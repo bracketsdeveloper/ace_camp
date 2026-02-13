@@ -6,7 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { OTPVerificationModal } from "@/components/auth/otp-verification-modal";
-import { ArrowRight, CheckCircle, XCircle, Loader2, Shield, Building } from "lucide-react";
+import { ArrowRight, CheckCircle, XCircle, Loader2, Building } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -51,6 +51,7 @@ export default function Login() {
   const [isFetchingName, setIsFetchingName] = useState(false);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [prefill, setPrefill] = useState<{ firstName: string; lastName: string } | null>(null);
+
   const [domainStatus, setDomainStatus] = useState<{
     isWhitelisted: boolean;
     domain: any;
@@ -69,9 +70,8 @@ export default function Login() {
 
   const { data: branding } = useQuery<Branding>({ queryKey: ["/api/admin/branding"] });
 
-  // Virtusa-like defaults
-  const primary = branding?.primaryColor || "#053354"; // deep navy
-  const accent = branding?.accentColor || "#02F576"; // neon green
+  const primary = branding?.primaryColor || "#053354";
+  const accent = branding?.accentColor || "#02F576";
   const company = branding?.companyName || "Virtusa";
   const logoUrl = branding?.logoUrl || null;
 
@@ -81,7 +81,7 @@ export default function Login() {
     root.style.setProperty("--brand-accent", accent);
   }, [primary, accent]);
 
-  // Check domain when email changes
+  // Domain check is UI-only (does NOT block login).
   useEffect(() => {
     const checkDomain = async () => {
       const emailDomain = email.split("@")[1];
@@ -180,6 +180,8 @@ export default function Login() {
     },
   });
 
+  // ✅ IMPORTANT: frontend must NOT block based on domain whitelist.
+  // It should only show info, and let backend decide via lookup+sendOtp.
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const normalizedEmail = email.trim().toLowerCase();
@@ -189,70 +191,63 @@ export default function Login() {
       return;
     }
 
-    if (domainStatus.checked && !domainStatus.isWhitelisted) {
-      toast({
-        title: "Domain Not Authorized",
-        description: "Your email domain is not authorized to access this platform.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (domainStatus.domain?.autoCreateUser && domainStatus.domain?.canLoginWithoutEmployeeId) {
-      setConfirmEmail(normalizedEmail);
-      setFetchedName({
-        firstName: "",
-        lastName: "",
-        exists: false,
-        domainWhitelisted: true,
-        autoCreate: true,
-        defaultPoints: domainStatus.domain.defaultPoints || 0,
-      });
-      setShowConfirmModal(true);
-      return;
-    }
-
     setConfirmEmail(normalizedEmail);
     setFetchedName(null);
     setShowConfirmModal(true);
-
     setIsFetchingName(true);
+
     try {
       const res = await fetch(`/api/auth/lookup-by-email?email=${encodeURIComponent(normalizedEmail)}`, {
         method: "GET",
         headers: { accept: "application/json" },
       });
-      if (res.ok) {
-        const data: LookupResponse = await res.json();
-        setFetchedName(data);
 
-        if (!data.exists && !data.autoCreate && !data.domainWhitelisted) {
-          toast({
-            title: "Account Not Found",
-            description: "No account exists for this email. Please contact your administrator.",
-            variant: "destructive",
-          });
-          setShowConfirmModal(false);
-        }
-      } else if (res.status === 404) {
-        setFetchedName({ firstName: "", lastName: "", exists: false, domainWhitelisted: false, autoCreate: false });
-      } else {
+      if (!res.ok) {
         const msg = await res.text();
-        toast({ title: "Lookup failed", description: msg || "Unable to fetch user information.", variant: "destructive" });
+        toast({
+          title: "Lookup failed",
+          description: msg || "Unable to fetch user information.",
+          variant: "destructive",
+        });
+        setShowConfirmModal(false);
+        return;
+      }
+
+      const data: LookupResponse = await res.json();
+      setFetchedName(data);
+
+      // ✅ allow proceed if:
+      // - employee exists (even if domain not whitelisted)
+      // - OR backend says autoCreate allowed
+      const allowed = Boolean(data.exists || data.autoCreate);
+
+      if (!allowed) {
+        toast({
+          title: "Account Not Found",
+          description: "No employee account exists for this email. Please contact your administrator.",
+          variant: "destructive",
+        });
+        setShowConfirmModal(false);
+        return;
       }
     } catch (err: any) {
-      toast({ title: "Lookup error", description: err?.message || "Unable to fetch user information.", variant: "destructive" });
+      toast({
+        title: "Lookup error",
+        description: err?.message || "Unable to fetch user information.",
+        variant: "destructive",
+      });
+      setShowConfirmModal(false);
     } finally {
       setIsFetchingName(false);
     }
   };
 
   function ConfirmUserModal() {
-    const isAutoCreateUser = fetchedName?.autoCreate && !fetchedName?.exists;
-    const isExistingUser = fetchedName?.exists;
-    const isDomainWhitelisted = fetchedName?.domainWhitelisted || domainStatus.isWhitelisted;
+    const isExistingUser = Boolean(fetchedName?.exists);
+    const isAutoCreateUser = Boolean(fetchedName?.autoCreate && !fetchedName?.exists);
 
-    const canProceed = isFetchingName ? false : isExistingUser ? true : isAutoCreateUser ? true : false;
+    // ✅ Proceed if backend says exists OR autoCreate (do NOT use domainStatus here)
+    const canProceed = !isFetchingName && (isExistingUser || isAutoCreateUser);
 
     return (
       <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
@@ -267,7 +262,13 @@ export default function Login() {
               <Label htmlFor="confirm-email" className="text-white/80">
                 Email Address
               </Label>
-              <Input id="confirm-email" type="email" value={confirmEmail} readOnly className="bg-white/10 text-white border-white/15" />
+              <Input
+                id="confirm-email"
+                type="email"
+                value={confirmEmail}
+                readOnly
+                className="bg-white/10 text-white border-white/15"
+              />
             </div>
 
             {isExistingUser && fetchedName && (
@@ -283,10 +284,19 @@ export default function Login() {
               </div>
             )}
 
-            {!isDomainWhitelisted && (
+            {/* Info blocks (do not block) */}
+            {!domainStatus.isWhitelisted && isExistingUser && (
+              <div className="rounded-xl border border-white/15 bg-white/5 p-3">
+                <p className="text-sm text-white/80">
+                  Your domain is not whitelisted, but your employee account exists — you can proceed.
+                </p>
+              </div>
+            )}
+
+            {!domainStatus.isWhitelisted && !isExistingUser && (
               <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3">
                 <p className="text-sm text-red-200">
-                  <strong>Domain Not Authorized:</strong> Your email domain is not authorized to access this platform.
+                  <strong>Domain Not Whitelisted:</strong> You can proceed only if your account exists or your domain allows auto-registration.
                 </p>
               </div>
             )}
@@ -296,6 +306,7 @@ export default function Login() {
             <Button variant="secondary" onClick={() => setShowConfirmModal(false)} className="rounded-full">
               Cancel
             </Button>
+
             <Button
               onClick={() => {
                 const finalEmail = confirmEmail.trim().toLowerCase();
@@ -304,7 +315,11 @@ export default function Login() {
                   return;
                 }
                 if (!canProceed) {
-                  toast({ title: "Cannot Proceed", description: "Your account cannot be created or accessed.", variant: "destructive" });
+                  toast({
+                    title: "Cannot Proceed",
+                    description: "Your account cannot be created or accessed.",
+                    variant: "destructive",
+                  });
                   return;
                 }
                 setEmail(finalEmail);
@@ -314,7 +329,11 @@ export default function Login() {
               className="rounded-full"
               style={{ backgroundColor: accent, color: primary }}
             >
-              {sendOtpMutation.isPending ? "Sending OTP..." : isAutoCreateUser ? "Create Account & Send OTP" : "Send OTP"}
+              {sendOtpMutation.isPending
+                ? "Sending OTP..."
+                : isAutoCreateUser
+                ? "Create Account & Send OTP"
+                : "Send OTP"}
             </Button>
           </div>
         </DialogContent>
@@ -324,11 +343,12 @@ export default function Login() {
 
   const isEmailValid = email.includes("@") && email.includes(".");
   const emailDomain = email.split("@")[1];
-  const canLogin = isEmailValid && (domainStatus.checked ? domainStatus.isWhitelisted : true) && !domainStatus.isLoading;
+
+  // ✅ Allow clicking "Log in" even if domain not whitelisted (employee may exist)
+  const canLogin = isEmailValid && !domainStatus.isLoading;
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      {/* Background image */}
       <div
         className="absolute inset-0"
         style={{
@@ -339,7 +359,6 @@ export default function Login() {
         }}
       />
 
-      {/* Centered dark wash */}
       <div
         className="absolute inset-0"
         style={{
@@ -348,29 +367,31 @@ export default function Login() {
         }}
       />
 
-      {/* Logo */}
       <div className="absolute top-8 left-8 z-20">
         {logoUrl ? (
-          <img src={logoUrl} alt={`${company} Logo`} className="h-10 md:h-12" data-testid="img-carelon-logo" />
+          <img src={logoUrl} alt={`${company} Logo`} className="h-10 md:h-12" />
         ) : (
-          <Building className="h-10 w-10 md:h-12 md:w-12" style={{ color: "#FFFFFF" }} data-testid="img-carelon-logo" />
+          <Building className="h-10 w-10 md:h-12 md:w-12" style={{ color: "#FFFFFF" }} />
         )}
       </div>
 
-      {/* Content */}
       <div className="relative min-h-screen flex items-center justify-center p-4 z-10">
         <div className="w-full max-w-2xl text-center">
-          <h1 className="text-5xl font-semibold mb-3" style={{ color: "#FFFFFF" }} data-testid="text-login-title">
+          <h1 className="text-5xl font-semibold mb-3" style={{ color: "#FFFFFF" }}>
             Welcome
           </h1>
-          <p className="text-lg md:text-xl mb-10" style={{ color: "rgba(255,255,255,0.75)" }} data-testid="text-login-subtitle">
+          <p className="text-lg md:text-xl mb-10" style={{ color: "rgba(255,255,255,0.75)" }}>
             Login to your account
           </p>
 
-          {/* Domain Status Alert */}
+          {/* Domain Status Alert (informational only) */}
           {emailDomain && domainStatus.checked && (
             <div className="mb-6 max-w-md mx-auto">
-              <Alert className={`border ${domainStatus.isWhitelisted ? "border-white/15 bg-white/5" : "border-red-500/30 bg-red-500/10"} text-white`}>
+              <Alert
+                className={`border ${
+                  domainStatus.isWhitelisted ? "border-white/15 bg-white/5" : "border-red-500/30 bg-red-500/10"
+                } text-white`}
+              >
                 <div className="flex items-start gap-2">
                   {domainStatus.isLoading ? (
                     <Loader2 className="h-4 w-4 animate-spin mt-0.5" />
@@ -390,15 +411,17 @@ export default function Login() {
                         {domainStatus.domain?.autoCreateUser && (
                           <div className="text-xs text-white/60">
                             New users from @{emailDomain} can auto-register
-                            {domainStatus.domain.defaultPoints > 0 && <span> with {domainStatus.domain.defaultPoints} starting points</span>}
+                            {domainStatus.domain.defaultPoints > 0 && (
+                              <span> with {domainStatus.domain.defaultPoints} starting points</span>
+                            )}
                           </div>
                         )}
                       </div>
                     ) : (
                       <div className="space-y-1">
-                        <span className="font-medium text-red-200">Domain not authorized</span>
+                        <span className="font-medium text-red-200">Domain not whitelisted</span>
                         <div className="text-xs text-white/70">
-                          @{emailDomain} is not authorized to access this platform. Please contact your administrator.
+                          You may still login if your employee account already exists.
                         </div>
                       </div>
                     )}
@@ -408,7 +431,6 @@ export default function Login() {
             </div>
           )}
 
-          {/* Form card */}
           <div className="mx-auto max-w-xl rounded-2xl border border-white/10 bg-white/5 p-8 backdrop-blur-md">
             <form onSubmit={handleSubmit} className="space-y-7">
               <div className="text-left">
@@ -423,18 +445,13 @@ export default function Login() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   className="h-14 bg-white/10 text-white border-white/15 rounded-xl placeholder:text-white/40"
-                  data-testid="input-email"
                 />
-                {emailDomain && !domainStatus.checked && !domainStatus.isLoading && (
-                  <p className="text-xs mt-2 text-white/55">Enter a valid company email address</p>
-                )}
               </div>
 
               <Button
                 type="submit"
                 size="lg"
                 className="w-full h-14 text-lg rounded-full flex items-center justify-center gap-2"
-                data-testid="button-login"
                 style={{ backgroundColor: accent, color: primary }}
                 disabled={sendOtpMutation.isPending || domainStatus.isLoading || !canLogin}
               >
@@ -442,9 +459,7 @@ export default function Login() {
                 <ArrowRight className="h-5 w-5" />
               </Button>
 
-              <p className="text-xs text-white/55">
-                By continuing, you agree to your organization’s access policies.
-              </p>
+              <p className="text-xs text-white/55">By continuing, you agree to your organization’s access policies.</p>
             </form>
           </div>
         </div>

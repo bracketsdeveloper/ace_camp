@@ -16,10 +16,12 @@ import {
   insertBlogSchema,
   type Blog,
 } from "@shared/schema";
+import { employeeRoleSchema } from "@shared/schema"; // <-- add this export in shared/schema.ts as shown earlier
 import { storage } from "./storage";
 import { sendOTP, verifyOTP, lookupByEmail } from "./auth-otp";
 import crypto from "crypto";
 import "dotenv/config";
+import { emailService } from "./email-service"; // ✅ ADD THIS
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) {
@@ -120,8 +122,9 @@ function getUnitPriceForQty(product: any, qty: number): number {
   const match = slabs.find((s: any) => {
     const min = Number(s?.minQty);
     const max =
-      s?.maxQty === null || s?.maxQty === undefined ? Number.POSITIVE_INFINITY : Number(s?.maxQty);
-
+      s?.maxQty === null || s?.maxQty === undefined
+        ? Number.POSITIVE_INFINITY
+        : Number(s?.maxQty);
     return Number.isFinite(min) && qty >= min && qty <= max;
   });
 
@@ -129,7 +132,6 @@ function getUnitPriceForQty(product: any, qty: number): number {
 
   const slabPrice = Number(match.price);
   if (!Number.isFinite(slabPrice) || slabPrice < 0) return base;
-
   return slabPrice;
 }
 
@@ -160,6 +162,73 @@ function attachCategoriesToProduct<T extends Product>(
     categories,
     category: categories[0] ?? null,
   };
+}
+
+async function requireBulkBuyAccess(req: any, res: any) {
+  const token = req.headers.authorization?.replace("Bearer ", "");
+  if (!token) {
+    res.status(401).json({ message: "No token" });
+    return { ok: false as const };
+  }
+
+  const session = await storage.getSession(token);
+  if (!session) {
+    res.status(401).json({ message: "Invalid session" });
+    return { ok: false as const };
+  }
+
+  const employee = await storage.getEmployee(session.employeeId);
+  if (!employee) {
+    res.status(404).json({ message: "Employee not found" });
+    return { ok: false as const };
+  }
+
+  // ✅ Allow if employee flag is enabled
+  const employeeEligible = employee.bulkBuyAllowed === true;
+
+  // ✅ Or allow if access allowlist says enabled
+  const access = await storage.getBulkBuyAccessByEmail(employee.email);
+  const accessEligible = !!access?.isActive;
+
+  if (!employeeEligible && !accessEligible) {
+    res.status(403).json({ message: "Bulk Buy access not enabled" });
+    return { ok: false as const };
+  }
+
+  return { ok: true as const, employee, session, access };
+}
+
+
+function buildItemsTableHtml(items: any[]) {
+  const rows = items
+    .map(
+      (it) => `
+      <tr>
+        <td style="padding:8px;border:1px solid #eee;">${it.name}</td>
+        <td style="padding:8px;border:1px solid #eee;">${it.sku || ""}</td>
+        <td style="padding:8px;border:1px solid #eee;">${it.selectedColor || "-"}</td>
+        <td style="padding:8px;border:1px solid #eee;text-align:right;">${it.quantity}</td>
+        <td style="padding:8px;border:1px solid #eee;text-align:right;">₹${Number(it.unitPrice).toFixed(2)}</td>
+        <td style="padding:8px;border:1px solid #eee;text-align:right;">₹${Number(it.lineTotal).toFixed(2)}</td>
+      </tr>`
+    )
+    .join("");
+
+  return `
+    <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif;">
+      <thead>
+        <tr>
+          <th style="padding:8px;border:1px solid #eee;text-align:left;">Product</th>
+          <th style="padding:8px;border:1px solid #eee;text-align:left;">SKU</th>
+          <th style="padding:8px;border:1px solid #eee;text-align:left;">Color</th>
+          <th style="padding:8px;border:1px solid #eee;text-align:right;">Qty</th>
+          <th style="padding:8px;border:1px solid #eee;text-align:right;">Unit</th>
+          <th style="padding:8px;border:1px solid #eee;text-align:right;">Total</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
 export async function registerRoutes(app: Express): Promise<void> {
@@ -1062,90 +1131,153 @@ app.post("/api/orders/verify-copay", async (req, res) => {
     }
   });
 
-  app.post("/api/admin/employees/bulk", async (req, res) => {
-    try {
-      const rows = Array.isArray(req.body) ? req.body : [];
-      let inserted = 0;
-      let skipped = 0;
+// ✅ UPDATED: POST /api/admin/employees/bulk
+app.post("/api/admin/employees/bulk", async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body) ? req.body : [];
+    let inserted = 0;
+    let skipped = 0;
 
-      for (const r of rows) {
-        try {
-          const rawEmail = r.email ? String(r.email).trim().toLowerCase() : "";
-          if (!rawEmail || !isValidEmail(rawEmail)) {
-            skipped++;
-            continue;
-          }
+    const toBoolLoose = (v: any): boolean | undefined => {
+      if (v === undefined || v === null || v === "") return undefined;
+      if (typeof v === "boolean") return v;
+      if (typeof v === "number") return v === 1;
 
-          // Check domain whitelist
-          const domainCheck = await storage.checkDomainWhitelisted(rawEmail);
-          if (!domainCheck.isWhitelisted && domainCheck.domain?.canLoginWithoutEmployeeId === false) {
-            skipped++;
-            continue;
-          }
+      const s = String(v).trim().toLowerCase();
+      if (["1", "true", "yes", "y"].includes(s)) return true;
+      if (["0", "false", "no", "n"].includes(s)) return false;
+      return undefined;
+    };
 
-          const exists = await storage.getEmployeeByEmail(rawEmail);
-          if (exists) {
-            const pts = Number(r.points);
-            if (Number.isFinite(pts)) {
-              await storage.updateEmployee(exists.id, { points: pts });
-            }
-            skipped++;
-            continue;
-          }
-
-          const firstName = String(r.firstName || "").trim();
-          const lastName = String(r.lastName || "").trim();
-          const points = Number.isFinite(Number(r.points)) ? Number(r.points) : 0;
-
-          if (!firstName || !lastName) {
-            skipped++;
-            continue;
-          }
-
-          await storage.createEmployee({
-            firstName,
-            lastName,
-            email: rawEmail,
-            points,
-          } as any);
-
-          inserted++;
-        } catch {
+    for (const r of rows) {
+      try {
+        const rawEmail = r.email ? String(r.email).trim().toLowerCase() : "";
+        if (!rawEmail || !isValidEmail(rawEmail)) {
           skipped++;
+          continue;
         }
-      }
 
-      res.json({ inserted, skipped });
-    } catch {
-      res.status(400).json({ message: "Invalid bulk payload" });
-    }
-  });
-
-  app.put("/api/admin/employees/:id", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updates = { ...req.body };
-      if (updates.email !== undefined) {
-        const email = updates.email.trim().toLowerCase();
-        if (!isValidEmail(email)) return res.status(400).json({ message: "Invalid email" });
-        
         // Check domain whitelist
-        const domainCheck = await storage.checkDomainWhitelisted(email);
+        const domainCheck = await storage.checkDomainWhitelisted(rawEmail);
         if (!domainCheck.isWhitelisted && domainCheck.domain?.canLoginWithoutEmployeeId === false) {
-          return res.status(403).json({ 
-            message: "Email domain not authorized" 
-          });
+          skipped++;
+          continue;
         }
-        
-        updates.email = email;
+
+        const exists = await storage.getEmployeeByEmail(rawEmail);
+
+        // ✅ optional column in sheet: bulkBuyAllowed (true/false/1/0/yes/no)
+        const bulkBuyAllowed = toBoolLoose((r as any).bulkBuyAllowed);
+
+        if (exists) {
+          const pts = Number((r as any).points);
+          const patch: any = {};
+
+          if (Number.isFinite(pts)) patch.points = pts;
+          if (bulkBuyAllowed !== undefined) patch.bulkBuyAllowed = bulkBuyAllowed;
+
+          // only write if something actually changed
+          if (Object.keys(patch).length) {
+            await storage.updateEmployee(exists.id, patch);
+          }
+
+          skipped++;
+          continue;
+        }
+
+        const firstName = String((r as any).firstName || "").trim();
+        const lastName = String((r as any).lastName || "").trim();
+        const points = Number.isFinite(Number((r as any).points)) ? Number((r as any).points) : 0;
+
+        if (!firstName || !lastName) {
+          skipped++;
+          continue;
+        }
+
+        await storage.createEmployee({
+          firstName,
+          lastName,
+          email: rawEmail,
+          points,
+          // ✅ default false if not provided
+          bulkBuyAllowed: bulkBuyAllowed ?? false,
+        } as any);
+
+        inserted++;
+      } catch {
+        skipped++;
       }
-      const updated = await storage.updateEmployee(id, updates);
-      if (!updated) return res.status(404).json({ message: "Employee not found" });
-      res.json(updated);
-    } catch {
-      res.status(500).json({ message: "Error updating employee" });
     }
-  });
+
+    res.json({ inserted, skipped });
+  } catch {
+    res.status(400).json({ message: "Invalid bulk payload" });
+  }
+});
+
+
+app.put("/api/admin/employees/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Only allow specific editable fields
+    const updates: any = {};
+    const body = req.body || {};
+
+    if (body.firstName !== undefined) updates.firstName = String(body.firstName).trim();
+    if (body.lastName !== undefined) updates.lastName = String(body.lastName).trim();
+
+    // email update + validation + domain whitelist checks
+    if (body.email !== undefined) {
+      const email = String(body.email || "").trim().toLowerCase();
+      if (!isValidEmail(email)) return res.status(400).json({ message: "Invalid email" });
+
+      const domainCheck = await storage.checkDomainWhitelisted(email);
+      if (!domainCheck.isWhitelisted && domainCheck.domain?.canLoginWithoutEmployeeId === false) {
+        return res.status(403).json({ message: "Email domain not authorized" });
+      }
+
+      updates.email = email;
+    }
+
+    // points update
+    if (body.points !== undefined) {
+      const pts = Number(body.points);
+      if (!Number.isFinite(pts) || pts < 0) {
+        return res.status(400).json({ message: "Invalid points" });
+      }
+      updates.points = Math.floor(pts);
+    }
+
+    // bulkBuyAllowed update
+    if (body.bulkBuyAllowed !== undefined) {
+      updates.bulkBuyAllowed = Boolean(body.bulkBuyAllowed);
+    }
+
+    // ✅ role update
+    if (body.role !== undefined) {
+      const role = String(body.role || "").trim().toLowerCase();
+      const allowed = ["user", "admin", "procurement"];
+      if (!allowed.includes(role)) {
+        return res.status(400).json({ message: "Invalid role. Allowed: user, admin, procurement" });
+      }
+      updates.role = role;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ message: "No valid fields to update" });
+    }
+
+    const updated = await storage.updateEmployee(id, updates);
+    if (!updated) return res.status(404).json({ message: "Employee not found" });
+
+    res.json(updated);
+  } catch (error: any) {
+    console.error("Employee update error:", error);
+    res.status(500).json({ message: "Error updating employee", details: error.message });
+  }
+});
+
 
   app.post("/api/admin/employees/:id/unlock", async (req, res) => {
     try {
@@ -1551,6 +1683,453 @@ app.post("/api/orders/verify-copay", async (req, res) => {
     } catch (error: any) {
       console.error("Error fetching all campaign products:", error);
       res.status(500).json({ message: "Error fetching campaign products", details: error.message });
+    }
+  });
+
+  app.get("/api/bulkbuy/me", async (req, res) => {
+  try {
+    const token = req.headers.authorization?.replace("Bearer ", "");
+    if (!token) return res.status(401).json({ message: "No token" });
+
+    const session = await storage.getSession(token);
+    if (!session) return res.status(401).json({ message: "Invalid session" });
+
+    const employee = await storage.getEmployee(session.employeeId);
+    if (!employee) return res.status(404).json({ message: "Employee not found" });
+
+    const access = await storage.getBulkBuyAccessByEmail(employee.email);
+
+    const eligible = employee.bulkBuyAllowed === true || !!access?.isActive;
+
+    res.json({
+      eligible,
+      access: access ?? null,
+      employeeFlag: employee.bulkBuyAllowed === true,
+    });
+  } catch (e: any) {
+    res.status(500).json({ message: "Failed", details: e.message });
+  }
+});
+
+
+  /**
+   * ===========================
+   * USER: Bulk Buy products
+   * ===========================
+   */
+  app.get("/api/bulkbuy/products", async (req, res) => {
+    const guard = await requireBulkBuyAccess(req, res);
+    if (!guard.ok) return;
+
+    const prods = await storage.getBulkBuyProducts();
+    res.json(prods);
+  });
+
+  /**
+   * ===========================
+   * USER: Bulk Buy cart
+   * ===========================
+   */
+  app.get("/api/bulkbuy/cart", async (req, res) => {
+    const guard = await requireBulkBuyAccess(req, res);
+    if (!guard.ok) return;
+
+    const items = await storage.getBulkBuyCartItems(guard.employee.id);
+    res.json(items);
+  });
+
+  app.post("/api/bulkbuy/cart", async (req, res) => {
+    const guard = await requireBulkBuyAccess(req, res);
+    if (!guard.ok) return;
+
+    const { productId, selectedColor = null, quantity = 1 } = req.body || {};
+    if (!productId) return res.status(400).json({ message: "ProductId required" });
+    if (!Number.isInteger(quantity) || quantity < 1) return res.status(400).json({ message: "Invalid quantity" });
+
+    const p = await storage.getProduct(productId);
+    if (!p || p.isActive === false || p.bulkBuy !== true) {
+      return res.status(404).json({ message: "Bulk buy product not found" });
+    }
+
+    if (p.colors?.length > 0 && !selectedColor) {
+      return res.status(400).json({ message: "Please select a color" });
+    }
+
+    if ((p.stock || 0) < quantity) return res.status(400).json({ message: "Insufficient stock" });
+
+    // merge by product+color
+    const current = await storage.getBulkBuyCartItems(guard.employee.id);
+    const existing = current.find(
+      (it: any) => it.productId === productId && (it.selectedColor ?? null) === (selectedColor ?? null)
+    );
+
+    if (existing) {
+      const newQty = (existing.quantity || 1) + quantity;
+      if ((p.stock || 0) < newQty) return res.status(400).json({ message: "Insufficient stock" });
+
+      const updated = await storage.updateBulkBuyCartItem(existing.id, { quantity: newQty });
+      return res.json(updated);
+    }
+
+    const created = await storage.addBulkBuyCartItem(guard.employee.id, productId, selectedColor, quantity);
+    res.json(created);
+  });
+
+  app.delete("/api/bulkbuy/cart/:id", async (req, res) => {
+    const guard = await requireBulkBuyAccess(req, res);
+    if (!guard.ok) return;
+
+    const ok = await storage.removeBulkBuyCartItem(req.params.id);
+    res.json({ ok });
+  });
+
+  /**
+   * ===========================
+   * USER: Checkout -> request to procurement
+   * ===========================
+   */
+  app.post("/api/bulkbuy/checkout", async (req, res) => {
+    const guard = await requireBulkBuyAccess(req, res);
+    if (!guard.ok) return;
+
+    const { deliveryMethod = "office", deliveryAddress = null, requesterNote = null } = req.body || {};
+
+    const cart = await storage.getBulkBuyCartItems(guard.employee.id);
+    if (!cart.length) return res.status(400).json({ message: "Bulk buy cart is empty" });
+
+    let total = 0;
+    const itemsSnap: any[] = [];
+
+    for (const it of cart) {
+      const p = await storage.getProduct(it.productId);
+      if (!p || p.bulkBuy !== true) continue;
+
+      if ((p.stock || 0) < it.quantity) {
+        return res.status(400).json({ message: `Product unavailable: ${p.name}` });
+      }
+
+      const unitPrice = getUnitPriceForQty(p, it.quantity);
+      const lineTotal = Number((unitPrice * it.quantity).toFixed(2));
+      total += lineTotal;
+
+      itemsSnap.push({
+        productId: p.id,
+        name: p.name,
+        sku: p.sku,
+        selectedColor: it.selectedColor ?? null,
+        quantity: it.quantity,
+        unitPrice,
+        lineTotal,
+      });
+    }
+
+    if (!itemsSnap.length) return res.status(400).json({ message: "No valid items to submit" });
+
+    const requestRec = await storage.createBulkBuyRequest({
+      employeeId: guard.employee.id,
+      deliveryMethod,
+      deliveryAddress,
+      requesterNote,
+      items: itemsSnap,
+      totalAmount: total,
+    });
+
+    await storage.clearBulkBuyCart(guard.employee.id);
+
+    // Email recipients
+    const procurementEmails = await storage.getProcurementRecipients();
+    const supportEmail = "support@acegiftingsolutions.com";
+
+    const subject = `Bulk Buy Request Submitted: ${requestRec.requestId}`;
+    const table = buildItemsTableHtml(itemsSnap);
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;color:#111;">
+        <h2>Bulk Buy Request Submitted</h2>
+        <p><b>Request ID:</b> ${requestRec.requestId}</p>
+        <p><b>Requester:</b> ${guard.employee.firstName} ${guard.employee.lastName} (${guard.employee.email})</p>
+        <p><b>Status:</b> ${requestRec.status}</p>
+        <p><b>Delivery:</b> ${deliveryMethod}${deliveryMethod === "delivery" && deliveryAddress ? ` - ${deliveryAddress}` : ""}</p>
+        ${requesterNote ? `<p><b>Note:</b> ${requesterNote}</p>` : ""}
+        <h3>Items</h3>
+        ${table}
+        <p style="margin-top:12px;"><b>Total:</b> ₹${Number(total).toFixed(2)}</p>
+        <p style="margin-top:16px;">Message to user: <b>Your request has been submitted to procurement team for approval..</b></p>
+      </div>
+    `;
+
+    // A) requester
+    await emailService.sendMail({
+      to: guard.employee.email,
+      subject,
+      html,
+      text: `Bulk Buy Request ${requestRec.requestId} submitted. Total ₹${Number(total).toFixed(2)}.`,
+      fromName: "Bulk Buy",
+    });
+
+    // B) procurement team + C) support
+    await emailService.sendMail({
+      to: procurementEmails.length ? procurementEmails : supportEmail,
+      cc: supportEmail,
+      subject,
+      html,
+      text: `Bulk Buy Request ${requestRec.requestId} submitted by ${guard.employee.email}.`,
+      fromName: "Bulk Buy",
+    });
+
+    res.json({
+      request: requestRec,
+      message: "Your request has been submitted to procurement team for approval..",
+    });
+  });
+
+  /**
+   * ===========================
+   * USER: My bulk buy requests
+   * ===========================
+   */
+  app.get("/api/bulkbuy/requests/my", async (req, res) => {
+    const guard = await requireBulkBuyAccess(req, res);
+    if (!guard.ok) return;
+
+    const rows = await storage.getBulkBuyRequestsByEmployeeId(guard.employee.id);
+    res.json(rows);
+  });
+
+
+  /**
+ * ===========================
+ * USER: Direct Request (no cart)
+ * POST /api/bulkbuy/request
+ * Body: { productId, quantity, selectedColor, deliveryMethod, deliveryAddress, requesterNote }
+ * ===========================
+ */
+app.post("/api/bulkbuy/request", async (req, res) => {
+  const guard = await requireBulkBuyAccess(req, res);
+  if (!guard.ok) return;
+
+  try {
+    const {
+      productId,
+      quantity = 1,
+      selectedColor = null,
+      deliveryMethod = "office",
+      deliveryAddress = null,
+      requesterNote = null,
+    } = req.body || {};
+
+    if (!productId) return res.status(400).json({ message: "ProductId required" });
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      return res.status(400).json({ message: "Invalid quantity" });
+    }
+
+    if (!["office", "delivery"].includes(deliveryMethod)) {
+      return res.status(400).json({ message: "Invalid delivery method" });
+    }
+
+    if (deliveryMethod === "delivery" && !String(deliveryAddress || "").trim()) {
+      return res.status(400).json({ message: "Delivery address required" });
+    }
+
+    const p = await storage.getProduct(productId);
+    if (!p || p.isActive === false || p.bulkBuy !== true) {
+      return res.status(404).json({ message: "Bulk buy product not found" });
+    }
+
+    if (p.colors?.length > 0 && !selectedColor) {
+      return res.status(400).json({ message: "Please select a color" });
+    }
+
+    if ((p.stock || 0) < quantity) {
+      return res.status(400).json({ message: "Insufficient stock" });
+    }
+
+    const unitPrice = getUnitPriceForQty(p, quantity);
+    const lineTotal = Number((unitPrice * quantity).toFixed(2));
+
+    const itemsSnap = [
+      {
+        productId: p.id,
+        name: p.name,
+        sku: p.sku,
+        selectedColor: selectedColor ?? null,
+        quantity,
+        unitPrice,
+        lineTotal,
+      },
+    ];
+
+    const requestRec = await storage.createBulkBuyRequest({
+      employeeId: guard.employee.id,
+      deliveryMethod,
+      deliveryAddress: deliveryMethod === "delivery" ? deliveryAddress : null,
+      requesterNote,
+      items: itemsSnap,
+      totalAmount: lineTotal,
+    });
+
+    // OPTIONAL: notify via email (same as checkout)
+    const procurementEmails = await storage.getProcurementRecipients();
+    const supportEmail = "support@acegiftingsolutions.com";
+
+    const subject = `Bulk Buy Request Submitted: ${requestRec.requestId}`;
+    const table = buildItemsTableHtml(itemsSnap);
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;color:#111;">
+        <h2>Bulk Buy Request Submitted</h2>
+        <p><b>Request ID:</b> ${requestRec.requestId}</p>
+        <p><b>Requester:</b> ${guard.employee.firstName} ${guard.employee.lastName} (${guard.employee.email})</p>
+        <p><b>Status:</b> ${requestRec.status}</p>
+        <p><b>Delivery:</b> ${deliveryMethod}${
+          deliveryMethod === "delivery" && deliveryAddress ? ` - ${deliveryAddress}` : ""
+        }</p>
+        ${requesterNote ? `<p><b>Note:</b> ${requesterNote}</p>` : ""}
+        <h3>Items</h3>
+        ${table}
+        <p style="margin-top:12px;"><b>Total:</b> ₹${Number(lineTotal).toFixed(2)}</p>
+        <p style="margin-top:16px;">Message to user: <b>Your request has been submitted to procurement team for approval..</b></p>
+      </div>
+    `;
+
+    await emailService.sendMail({
+      to: guard.employee.email,
+      subject,
+      html,
+      text: `Bulk Buy Request ${requestRec.requestId} submitted. Total ₹${Number(lineTotal).toFixed(2)}.`,
+      fromName: "Bulk Buy",
+    });
+
+    await emailService.sendMail({
+      to: procurementEmails.length ? procurementEmails : supportEmail,
+      cc: supportEmail,
+      subject,
+      html,
+      text: `Bulk Buy Request ${requestRec.requestId} submitted by ${guard.employee.email}.`,
+      fromName: "Bulk Buy",
+    });
+
+    return res.json({
+      request: requestRec,
+      message: "Your request has been submitted to procurement team for approval..",
+    });
+  } catch (e: any) {
+    console.error("bulkbuy/request error:", e);
+    return res.status(500).json({ message: "Failed to submit request", details: e.message });
+  }
+});
+
+  /**
+   * ===========================
+   * ADMIN: Bulk buy access allowlist upload
+   * Expected headers: email,isActive,department,designation,isProcurement
+   * ===========================
+   */
+  app.post("/api/admin/bulkbuy/access/bulk", async (req, res) => {
+    try {
+      const rows = Array.isArray(req.body) ? req.body : [];
+      let upserted = 0;
+      let skipped = 0;
+
+      for (const r of rows) {
+        const email = String(r.email || "").trim().toLowerCase();
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          skipped++;
+          continue;
+        }
+
+        await storage.upsertBulkBuyAccess({
+          email,
+          isActive: r.isActive !== undefined ? !!r.isActive : true,
+          department: r.department ? String(r.department) : null,
+          designation: r.designation ? String(r.designation) : null,
+          isProcurement: r.isProcurement !== undefined ? !!r.isProcurement : false,
+        } as any);
+
+        upserted++;
+      }
+
+      res.json({ upserted, skipped });
+    } catch (e: any) {
+      res.status(400).json({ message: "Invalid payload", details: e.message });
+    }
+  });
+
+  /**
+   * ===========================
+   * ADMIN: View all bulk buy requests
+   * ===========================
+   */
+  app.get("/api/admin/bulkbuy/requests", async (_req, res) => {
+    const rows = await storage.getAllBulkBuyRequests();
+    res.json(rows);
+  });
+
+  /**
+   * ===========================
+   * ADMIN: Approve/Reject request
+   * Body: { status: "approved"|"rejected", procurementNote?: string, approvedByEmployeeId?: string }
+   * Triggers email to requester + procurement + support
+   * ===========================
+   */
+  app.put("/api/admin/bulkbuy/requests/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status, procurementNote = null, approvedByEmployeeId = null } = req.body || {};
+
+      if (!["approved", "rejected", "pending_approval"].includes(status)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+
+      const updated = await storage.updateBulkBuyRequest(id, {
+        status: status as any,
+        procurementNote,
+        approvedByEmployeeId: approvedByEmployeeId || null,
+        approvedAt: status === "approved" ? new Date() : null,
+      } as any);
+
+      if (!updated) return res.status(404).json({ message: "Request not found" });
+
+      const requester = await storage.getEmployee(updated.employeeId);
+      const procurementEmails = await storage.getProcurementRecipients();
+      const supportEmail = "support@acegiftingsolutions.com";
+
+      const subject = `Bulk Buy Request ${String(status).toUpperCase()}: ${updated.requestId}`;
+
+      const html = `
+        <div style="font-family:Arial,sans-serif;color:#111;">
+          <h2>Bulk Buy Request Update</h2>
+          <p><b>Request ID:</b> ${updated.requestId}</p>
+          <p><b>Status:</b> ${updated.status}</p>
+          <p><b>Total:</b> ₹${updated.totalAmount}</p>
+          ${procurementNote ? `<p><b>Procurement Note:</b> ${procurementNote}</p>` : ""}
+        </div>
+      `;
+
+      // notify requester
+      if (requester?.email) {
+        await emailService.sendMail({
+          to: requester.email,
+          subject,
+          html,
+          text: `Your Bulk Buy Request ${updated.requestId} is now ${updated.status}.`,
+          fromName: "Bulk Buy",
+        });
+      }
+
+      // notify procurement + support
+      await emailService.sendMail({
+        to: procurementEmails.length ? procurementEmails : supportEmail,
+        cc: supportEmail,
+        subject,
+        html,
+        text: `Bulk Buy Request ${updated.requestId} updated to ${updated.status}.`,
+        fromName: "Bulk Buy",
+      });
+
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ message: "Failed to update request", details: e.message });
     }
   });
 }
