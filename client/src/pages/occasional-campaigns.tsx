@@ -1,5 +1,5 @@
 // src/pages/occasional-campaigns.tsx
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
 import { useToast } from "@/hooks/use-toast";
@@ -22,6 +22,7 @@ type Campaign = {
   startDate: string;
   endDate: string;
   isActive: boolean;
+  maxProductsPerUser?: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -39,6 +40,7 @@ type Product = {
   isActive: boolean;
   specifications?: string;
   packagesInclude?: string[];
+  sizes?: { unit: string; values: string[] } | null;
   category?: {
     id: string;
     name: string;
@@ -70,7 +72,7 @@ function ProductDetailModal({
   product: Product | null;
   isOpen: boolean;
   onClose: () => void;
-  onAddToCart: (product: Product) => void;
+  onAddToCart: (item: { product: Product, color?: string, size?: string }) => void;
   isAddingToCart: boolean;
 }) {
   const { data: branding } = useQuery<Branding>({
@@ -79,6 +81,15 @@ function ProductDetailModal({
 
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [selectedColor, setSelectedColor] = useState<string>("");
+  const [selectedSize, setSelectedSize] = useState<string>("");
+  const { toast } = useToast();
+
+  useEffect(() => {
+    if (isOpen && product) {
+      setSelectedColor(product.colors?.[0] || "");
+      setSelectedSize("");
+    }
+  }, [isOpen, product]);
 
   const inrPerPoint = parseFloat(branding?.inrPerPoint || "1");
   const pointsRequired = Math.ceil(parseFloat(product?.price || "0") / inrPerPoint);
@@ -86,14 +97,14 @@ function ProductDetailModal({
   // Handle image navigation
   const handlePrevImage = () => {
     if (!product?.images) return;
-    setSelectedImageIndex((prev) => 
+    setSelectedImageIndex((prev) =>
       prev === 0 ? product.images.length - 1 : prev - 1
     );
   };
 
   const handleNextImage = () => {
     if (!product?.images) return;
-    setSelectedImageIndex((prev) => 
+    setSelectedImageIndex((prev) =>
       prev === product.images.length - 1 ? 0 : prev + 1
     );
   };
@@ -130,6 +141,28 @@ function ProductDetailModal({
       return { backgroundColor: color };
     }
     return {};
+  };
+
+  const handleAddToCart = () => {
+    if (!product) return;
+
+    if (product.colors && product.colors.length > 0 && !selectedColor) {
+      toast({
+        title: "Please select a color",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (product.sizes?.values?.length > 0 && !selectedSize) {
+      toast({
+        title: "Please select a size",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    onAddToCart({ product, color: selectedColor, size: selectedSize });
   };
 
   if (!product) return null;
@@ -173,11 +206,10 @@ function ProductDetailModal({
                           <button
                             key={idx}
                             onClick={() => setSelectedImageIndex(idx)}
-                            className={`w-2 h-2 rounded-full transition-all ${
-                              selectedImageIndex === idx 
-                                ? 'bg-blue-600 scale-125' 
-                                : 'bg-gray-300 hover:bg-gray-400'
-                            }`}
+                            className={`w-2 h-2 rounded-full transition-all ${selectedImageIndex === idx
+                              ? 'bg-blue-600 scale-125'
+                              : 'bg-gray-300 hover:bg-gray-400'
+                              }`}
                             aria-label={`View image ${idx + 1}`}
                           />
                         ))}
@@ -192,7 +224,7 @@ function ProductDetailModal({
                 </div>
               )}
             </div>
-            
+
             {/* Image Thumbnails */}
             {product.images && product.images.length > 1 && (
               <div className="flex space-x-2 overflow-x-auto pt-4">
@@ -200,11 +232,10 @@ function ProductDetailModal({
                   <button
                     key={index}
                     onClick={() => setSelectedImageIndex(index)}
-                    className={`flex-shrink-0 w-20 h-20 bg-gray-100 rounded-lg overflow-hidden border-2 transition-colors ${
-                      selectedImageIndex === index 
-                        ? 'border-blue-500' 
-                        : 'border-transparent hover:border-gray-300'
-                    }`}
+                    className={`flex-shrink-0 w-20 h-20 bg-gray-100 rounded-lg overflow-hidden border-2 transition-colors ${selectedImageIndex === index
+                      ? 'border-blue-500'
+                      : 'border-transparent hover:border-gray-300'
+                      }`}
                   >
                     <img
                       src={image}
@@ -220,7 +251,7 @@ function ProductDetailModal({
               </div>
             )}
           </div>
-          
+
           {/* Details Section */}
           <div className="p-8 bg-muted/30 flex flex-col">
             <div className="flex items-center justify-between mb-6">
@@ -238,7 +269,7 @@ function ProductDetailModal({
                 <X className="h-6 w-6" />
               </Button>
             </div>
-            
+
             {/* Price Display */}
             <div className="mb-6">
               <div className="text-3xl font-bold text-blue-600">
@@ -250,19 +281,19 @@ function ProductDetailModal({
                 </div>
               )}
             </div>
-            
+
             {/* Stock Status */}
             <div className="mb-6">
-              <Badge 
+              <Badge
                 variant={product.stock > 0 ? "default" : "destructive"}
                 className="text-sm py-1 px-3"
               >
-                {product.stock > 0 
-                  ? `${product.stock} items in stock` 
+                {product.stock > 0
+                  ? `${product.stock} items in stock`
                   : 'Out of stock'}
               </Badge>
             </div>
-            
+
             {/* Specifications */}
             {product.specifications && (
               <div className="mb-6">
@@ -274,7 +305,7 @@ function ProductDetailModal({
                 </div>
               </div>
             )}
-            
+
             {/* Packages Include */}
             {product.packagesInclude && product.packagesInclude.length > 0 && (
               <div className="mb-6">
@@ -289,15 +320,15 @@ function ProductDetailModal({
                 </div>
               </div>
             )}
-            
+
             {/* Categories */}
             {product.categories && product.categories.length > 0 && (
               <div className="mb-6">
                 <h4 className="font-semibold text-lg mb-3">Categories:</h4>
                 <div className="flex flex-wrap gap-2">
                   {product.categories.map((category) => (
-                    <Badge 
-                      key={category.id} 
+                    <Badge
+                      key={category.id}
                       variant="outline"
                       className="text-sm"
                     >
@@ -307,7 +338,25 @@ function ProductDetailModal({
                 </div>
               </div>
             )}
-            
+
+            {/* Size selection */}
+            {product.sizes?.values?.length > 0 && (
+              <div className="mb-6">
+                <h4 className="font-semibold text-lg mb-3">Choose Size ({product.sizes.unit}):</h4>
+                <div className="flex flex-wrap gap-2">
+                  {product.sizes.values.map((size) => (
+                    <Button
+                      key={size}
+                      variant={selectedSize === size ? "default" : "outline"}
+                      onClick={() => setSelectedSize(size)}
+                    >
+                      {size}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Color Selection */}
             {product.colors && product.colors.length > 0 && (
               <div className="mb-6">
@@ -317,11 +366,10 @@ function ProductDetailModal({
                     <button
                       key={color}
                       type="button"
-                      className={`w-12 h-12 rounded-full border-2 transition-all duration-200 ${
-                        selectedColor === color 
-                          ? "ring-2 ring-blue-500 ring-offset-2" 
-                          : "border-gray-300 hover:border-blue-400"
-                      } ${getColorStyle(color)}`}
+                      className={`w-12 h-12 rounded-full border-2 transition-all duration-200 ${selectedColor === color
+                        ? "ring-2 ring-blue-500 ring-offset-2"
+                        : "border-gray-300 hover:border-blue-400"
+                        } ${getColorStyle(color)}`}
                       style={getColorInlineStyle(color)}
                       onClick={() => setSelectedColor(color)}
                       aria-pressed={selectedColor === color}
@@ -337,12 +385,12 @@ function ProductDetailModal({
                 )}
               </div>
             )}
-            
+
             {/* Add to Cart Button */}
             <div className="mt-auto">
               <Button
                 className="w-full py-4 text-lg font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200"
-                onClick={() => onAddToCart(product)}
+                onClick={handleAddToCart}
                 disabled={product.stock === 0 || isAddingToCart}
                 size="lg"
               >
@@ -358,11 +406,11 @@ function ProductDetailModal({
 }
 
 // Campaign Card Component
-function CampaignCard({ 
-  campaign, 
+function CampaignCard({
+  campaign,
   onSelect,
-  isSelected 
-}: { 
+  isSelected
+}: {
   campaign: Campaign;
   onSelect: (campaign: Campaign) => void;
   isSelected: boolean;
@@ -372,7 +420,7 @@ function CampaignCard({
     const now = new Date();
     const startDate = campaign.startDate ? new Date(campaign.startDate) : null;
     const endDate = campaign.endDate ? new Date(campaign.endDate) : null;
-    
+
     if (startDate && now < startDate) return false;
     if (endDate && now > endDate) return false;
     return true;
@@ -387,12 +435,11 @@ function CampaignCard({
   };
 
   return (
-    <div 
-      className={`bg-white rounded-2xl shadow-sm border-2 overflow-hidden transition-all duration-300 cursor-pointer hover:shadow-lg ${
-        isSelected 
-          ? 'border-blue-600 ring-4 ring-blue-100' 
-          : 'border-gray-200 hover:border-blue-300'
-      } ${!isActiveCampaign ? 'opacity-70' : ''}`}
+    <div
+      className={`bg-white rounded-2xl shadow-sm border-2 overflow-hidden transition-all duration-300 cursor-pointer hover:shadow-lg ${isSelected
+        ? 'border-blue-600 ring-4 ring-blue-100'
+        : 'border-gray-200 hover:border-blue-300'
+        } ${!isActiveCampaign ? 'opacity-70' : ''}`}
       onClick={() => isActiveCampaign && onSelect(campaign)}
     >
       <div className="relative">
@@ -411,22 +458,21 @@ function CampaignCard({
           </div>
         )}
         <div className="absolute top-4 right-4">
-          <div className={`px-3 py-1 rounded-full text-sm font-medium ${
-            isActiveCampaign 
-              ? 'bg-green-100 text-green-800' 
-              : 'bg-gray-100 text-gray-800'
-          }`}>
+          <div className={`px-3 py-1 rounded-full text-sm font-medium ${isActiveCampaign
+            ? 'bg-green-100 text-green-800'
+            : 'bg-gray-100 text-gray-800'
+            }`}>
             {isActiveCampaign ? 'Active' : 'Inactive'}
           </div>
         </div>
       </div>
-      
+
       <div className="p-6">
         <h3 className="text-xl font-bold text-gray-900 mb-2">{campaign.name}</h3>
         <div className="text-gray-600 mb-4 line-clamp-2 whitespace-pre-wrap">
           {campaign.description || "No description provided"}
         </div>
-        
+
         <div className="flex items-center justify-between text-sm text-gray-500 mb-3">
           <div className="flex items-center gap-1">
             <Calendar className="w-4 h-4" />
@@ -437,15 +483,14 @@ function CampaignCard({
             <span>End: {formatDate(campaign.endDate)}</span>
           </div>
         </div>
-        
+
         <Button
-          className={`w-full mt-4 ${
-            isSelected 
-              ? 'bg-blue-600 hover:bg-blue-700 text-white' 
-              : isActiveCampaign 
-                ? 'bg-gray-100 text-gray-900 hover:bg-gray-200' 
-                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-          }`}
+          className={`w-full mt-4 ${isSelected
+            ? 'bg-blue-600 hover:bg-blue-700 text-white'
+            : isActiveCampaign
+              ? 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+            }`}
           size="lg"
           disabled={!isActiveCampaign}
         >
@@ -457,18 +502,18 @@ function CampaignCard({
 }
 
 // Product Card Component
-function ProductCard({ 
-  product, 
+function ProductCard({
+  product,
   onSelect,
   isSelected,
   onAddToCart,
   isAddingToCart,
   onViewDetails
-}: { 
+}: {
   product: Product;
   onSelect: (product: Product) => void;
   isSelected: boolean;
-  onAddToCart: (product: Product) => void;
+  onAddToCart: (item: { product: Product, color?: string, size?: string }) => void;
   isAddingToCart: boolean;
   onViewDetails: (product: Product) => void;
 }) {
@@ -479,8 +524,8 @@ function ProductCard({
     e.currentTarget.className = "w-full h-48 object-contain bg-gray-100";
   };
 
-  const mainImage = product.images && product.images.length > 0 
-    ? product.images[selectedImageIndex] 
+  const mainImage = product.images && product.images.length > 0
+    ? product.images[selectedImageIndex]
     : null;
 
   return (
@@ -505,11 +550,10 @@ function ProductCard({
                       e.stopPropagation();
                       setSelectedImageIndex(idx);
                     }}
-                    className={`w-2 h-2 rounded-full transition-all ${
-                      selectedImageIndex === idx 
-                        ? 'bg-blue-600 scale-125' 
-                        : 'bg-gray-300 hover:bg-gray-400'
-                    }`}
+                    className={`w-2 h-2 rounded-full transition-all ${selectedImageIndex === idx
+                      ? 'bg-blue-600 scale-125'
+                      : 'bg-gray-300 hover:bg-gray-400'
+                      }`}
                     aria-label={`View image ${idx + 1}`}
                   />
                 ))}
@@ -517,7 +561,7 @@ function ProductCard({
             )}
           </div>
         ) : (
-          <div 
+          <div
             className="w-full h-48 bg-gradient-to-r from-gray-100 to-gray-200 flex flex-col items-center justify-center p-4 cursor-pointer"
             onClick={() => onViewDetails(product)}
           >
@@ -543,11 +587,11 @@ function ProductCard({
           Details
         </button>
       </div>
-      
+
       <div className="p-4">
         <div className="flex justify-between items-start mb-2">
           <div className="flex-1">
-            <h4 
+            <h4
               className="font-bold text-gray-900 mb-1 line-clamp-1 cursor-pointer hover:text-blue-600"
               onClick={() => onViewDetails(product)}
             >
@@ -559,7 +603,7 @@ function ProductCard({
             ₹{parseFloat(product.price).toFixed(2)}
           </div>
         </div>
-        
+
         {/* Product Description */}
         {product.specifications && (
           <div className="mb-3">
@@ -568,7 +612,7 @@ function ProductCard({
             </p>
           </div>
         )}
-        
+
         {product.categories && product.categories.length > 0 && (
           <div className="flex flex-wrap gap-1 mb-3">
             {product.categories.slice(0, 2).map((category) => (
@@ -583,13 +627,13 @@ function ProductCard({
             )}
           </div>
         )}
-        
+
         {product.colors && product.colors.length > 0 && (
           <div className="mb-3">
             <p className="text-xs text-gray-600 mb-1">Colors:</p>
             <div className="flex flex-wrap gap-1">
               {product.colors.slice(0, 3).map((color, idx) => (
-                <span 
+                <span
                   key={idx}
                   className="px-2 py-1 text-xs bg-gray-100 rounded"
                   title={color}
@@ -605,7 +649,7 @@ function ProductCard({
             </div>
           </div>
         )}
-        
+
         <div className="flex gap-2 mt-4">
           <Button
             variant={isSelected ? "default" : "outline"}
@@ -625,7 +669,7 @@ function ProductCard({
           <Button
             variant="default"
             className="flex-1"
-            onClick={() => onAddToCart(product)}
+            onClick={() => onAddToCart({ product })}
             disabled={product.stock === 0 || isAddingToCart}
           >
             <ShoppingCart className="w-4 h-4 mr-2" />
@@ -638,13 +682,13 @@ function ProductCard({
 }
 
 // Campaign Hero Component - Updated to use special_occassions.jpg as background
-function CampaignHero({ 
-  companyName 
-}: { 
+function CampaignHero({
+  companyName
+}: {
   companyName: string;
 }) {
   return (
-    <div 
+    <div
       className="relative min-h-[400px] md:min-h-[500px] rounded-2xl mx-4 mt-4 mb-8 overflow-hidden shadow-xl"
       style={{
         backgroundImage: `url(${specialOccasionsImg})`,
@@ -655,7 +699,7 @@ function CampaignHero({
     >
       <div className="absolute inset-0 bg-gradient-to-r from-black/30 via-transparent to-black/20"></div>
       <div className="relative z-10 h-full flex items-center justify-center text-center text-white px-4">
-        
+
       </div>
     </div>
   );
@@ -677,7 +721,7 @@ function ProductsModal({
   onClose: () => void;
   selectedProduct: Product | null;
   onSelectProduct: (product: Product) => void;
-  onAddToCart: (product: Product) => void;
+  onAddToCart: (item: { product: Product, color?: string, size?: string }) => void;
   isAddingToCart: boolean;
   onViewProductDetails: (product: Product) => void;
 }) {
@@ -702,7 +746,7 @@ function ProductsModal({
             <X className="w-5 h-5" />
           </Button>
         </div>
-        
+
         <div className="p-6 overflow-y-auto max-h-[calc(90vh-80px)]">
           {isLoading ? (
             <div className="flex items-center justify-center h-64">
@@ -723,7 +767,7 @@ function ProductsModal({
                   Select one product from this campaign to order
                 </p>
               </div>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {products.map((product) => (
                   <ProductCard
@@ -737,7 +781,7 @@ function ProductsModal({
                   />
                 ))}
               </div>
-              
+
               {selectedProduct && (
                 <div className="mt-8 p-4 bg-green-50 border border-green-200 rounded-xl">
                   <div className="flex items-center justify-between">
@@ -747,7 +791,7 @@ function ProductsModal({
                         <span className="font-semibold text-green-800">Product Selected</span>
                       </div>
                       <p className="text-green-700">
-                        You've selected <span className="font-bold">{selectedProduct.name}</span> 
+                        You've selected <span className="font-bold">{selectedProduct.name}</span>
                         for ₹{parseFloat(selectedProduct.price).toFixed(2)}
                       </p>
                       {selectedProduct.specifications && (
@@ -767,7 +811,7 @@ function ProductsModal({
                       <Button
                         variant="default"
                         className="bg-green-600 hover:bg-green-700 whitespace-nowrap"
-                        onClick={() => onAddToCart(selectedProduct)}
+                        onClick={() => onAddToCart({ product: selectedProduct })}
                         disabled={isAddingToCart}
                       >
                         <ShoppingCart className="w-4 h-4 mr-2" />
@@ -817,7 +861,7 @@ export default function OccasionalCampaigns() {
       const now = new Date();
       const startDate = campaign.startDate ? new Date(campaign.startDate) : null;
       const endDate = campaign.endDate ? new Date(campaign.endDate) : null;
-      
+
       if (startDate && now < startDate) return false;
       if (endDate && now > endDate) return false;
       return true;
@@ -825,10 +869,10 @@ export default function OccasionalCampaigns() {
   }, [sortedCampaigns]);
 
   const addToCartMutation = useMutation({
-    mutationFn: async (product: Product) => {
+    mutationFn: async (data: { product: Product; color?: string; size?: string; campaignId?: string }) => {
       if (!employee) throw new Error("You must be logged in to add items to cart");
       if (!token) throw new Error("Authentication token not found");
-      
+
       const response = await fetch("/api/cart", {
         method: "POST",
         headers: {
@@ -836,16 +880,19 @@ export default function OccasionalCampaigns() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          productId: product.id,
+          productId: data.product.id,
+          selectedColor: data.color || null,
+          selectedSize: data.size || null,
           quantity: 1,
+          campaignId: data.campaignId,
         }),
       });
-      
+
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.message || "Failed to add to cart");
       }
-      
+
       return response.json();
     },
     onSuccess: () => {
@@ -859,6 +906,8 @@ export default function OccasionalCampaigns() {
       setShowProductDetailModal(false);
       // Invalidate cart query to refresh cart data
       queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
+      // Invalidate campaigns to hide fully utilized ones
+      queryClient.invalidateQueries({ queryKey: ["/api/campaigns"] });
     },
     onError: (error: any) => {
       toast({
@@ -879,7 +928,8 @@ export default function OccasionalCampaigns() {
     setSelectedProduct(product);
   }, []);
 
-  const handleAddToCart = useCallback((product: Product) => {
+  const handleAddToCart = useCallback((item: { product: Product, color?: string, size?: string }) => {
+    const { product, color, size } = item;
     if (!employee) {
       toast({
         title: "Login Required",
@@ -888,7 +938,7 @@ export default function OccasionalCampaigns() {
       });
       return;
     }
-    
+
     if (!token) {
       toast({
         title: "Authentication Error",
@@ -897,7 +947,7 @@ export default function OccasionalCampaigns() {
       });
       return;
     }
-    
+
     if (product.stock === 0) {
       toast({
         title: "Out of Stock",
@@ -906,9 +956,15 @@ export default function OccasionalCampaigns() {
       });
       return;
     }
-    
-    addToCartMutation.mutate(product);
-  }, [employee, token, addToCartMutation, toast]);
+
+    // Pass campaignId if selected
+    addToCartMutation.mutate({
+      product,
+      color,
+      size,
+      campaignId: selectedCampaign?.id
+    });
+  }, [selectedCampaign, addToCartMutation, employee, token, toast]);
 
   const handleViewProductDetails = useCallback((product: Product) => {
     setProductForDetails(product);
@@ -920,13 +976,13 @@ export default function OccasionalCampaigns() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
-      
-      <CampaignHero 
+
+      <CampaignHero
         companyName={companyName}
       />
-      
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        
+
 
         {isLoading ? (
           <div className="flex items-center justify-center h-64">
@@ -981,7 +1037,7 @@ export default function OccasionalCampaigns() {
           </>
         )}
 
-       
+
       </div>
 
       {/* Products Modal */}
@@ -1012,7 +1068,7 @@ export default function OccasionalCampaigns() {
         onAddToCart={handleAddToCart}
         isAddingToCart={addToCartMutation.isPending}
       />
-      
+
       <Footer />
     </div>
   );

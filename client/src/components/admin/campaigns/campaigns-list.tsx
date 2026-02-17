@@ -6,20 +6,22 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Edit, Trash, Package, Calendar, Image as ImageIcon } from "lucide-react";
+import { Edit, Trash, Package, Calendar, Image as ImageIcon, Users } from "lucide-react";
 import { CampaignEditModal } from "./campaign-edit-modal";
 import { CampaignProductsModal } from "./campaign-products-modal";
+import { CampaignWhitelistModal } from "./campaign-whitelist-modal";
 import type { Campaign } from "./types";
 
 export function CampaignsList() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data: campaigns = [] } = useQuery<Campaign[]>({ 
-    queryKey: ["/api/campaigns"] 
+  const { data: campaigns = [] } = useQuery<Campaign[]>({
+    queryKey: ["/api/campaigns"]
   });
-  
+
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [managingProductsCampaign, setManagingProductsCampaign] = useState<Campaign | null>(null);
+  const [managingWhitelistCampaign, setManagingWhitelistCampaign] = useState<Campaign | null>(null);
 
   const deleteCampaignMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -30,10 +32,10 @@ export function CampaignsList() {
       qc.invalidateQueries({ queryKey: ["/api/campaigns"] });
       toast({ title: "Campaign deleted" });
     },
-    onError: (e: any) => toast({ 
-      title: "Delete failed", 
-      description: e.message, 
-      variant: "destructive" 
+    onError: (e: any) => toast({
+      title: "Delete failed",
+      description: e.message,
+      variant: "destructive"
     }),
   });
 
@@ -44,14 +46,14 @@ export function CampaignsList() {
 
   const isActiveCampaign = (campaign: Campaign) => {
     if (!campaign.isActive) return false;
-    
+
     const now = new Date();
     const startDate = campaign.startDate ? new Date(campaign.startDate) : null;
     const endDate = campaign.endDate ? new Date(campaign.endDate) : null;
-    
+
     if (startDate && now < startDate) return false;
     if (endDate && now > endDate) return false;
-    
+
     return true;
   };
 
@@ -80,8 +82,8 @@ export function CampaignsList() {
                   <TableRow key={campaign.id}>
                     <TableCell>
                       {campaign.imageUrl ? (
-                        <img 
-                          src={campaign.imageUrl} 
+                        <img
+                          src={campaign.imageUrl}
                           alt={campaign.name}
                           className="w-12 h-12 object-cover rounded"
                         />
@@ -93,7 +95,7 @@ export function CampaignsList() {
                     </TableCell>
                     <TableCell className="font-medium">{campaign.name}</TableCell>
                     <TableCell>
-                      <Badge 
+                      <Badge
                         variant={isActiveCampaign(campaign) ? "default" : "secondary"}
                       >
                         {isActiveCampaign(campaign) ? "Active" : "Inactive"}
@@ -126,6 +128,14 @@ export function CampaignsList() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setManagingWhitelistCampaign(campaign)}
+                          title="Manage Whitelist"
+                        >
+                          <Users className="h-4 w-4" />
+                        </Button>
                         <Button
                           size="sm"
                           variant="outline"
@@ -164,6 +174,13 @@ export function CampaignsList() {
         <CampaignProductsModal
           campaign={managingProductsCampaign}
           onClose={() => setManagingProductsCampaign(null)}
+        />
+      )}
+
+      {managingWhitelistCampaign && (
+        <CampaignWhitelistModal
+          campaign={managingWhitelistCampaign}
+          onClose={() => setManagingWhitelistCampaign(null)}
         />
       )}
     </>

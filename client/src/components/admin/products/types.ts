@@ -31,4 +31,11 @@ export type Product = {
   // ✅ NEW
   priceSlabs?: PriceSlab[];
   bulkBuy?: boolean;
+
+  // ✅ NEW: Extra fields
+  gst?: string;
+  stockStatus?: "committed" | "non_committed";
+  brandStore?: boolean;
+  brand?: string;
+  sizes?: { unit: string; values: string[] } | null;
 };

@@ -51,6 +51,7 @@ export default function Login() {
   const [isFetchingName, setIsFetchingName] = useState(false);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [prefill, setPrefill] = useState<{ firstName: string; lastName: string } | null>(null);
+  const [isNewUser, setIsNewUser] = useState(false);
 
   const [domainStatus, setDomainStatus] = useState<{
     isWhitelisted: boolean;
@@ -126,6 +127,7 @@ export default function Login() {
           ? { firstName: fetchedName.firstName || "", lastName: fetchedName.lastName || "" }
           : { firstName: "", lastName: "" }
       );
+      setIsNewUser(data.isNewUser || false);
       setShowConfirmModal(false);
       setShowVerificationModal(true);
       toast({
@@ -139,7 +141,7 @@ export default function Login() {
       try {
         const json = JSON.parse(String(err.message).split(": ").slice(1).join(": "));
         message = json?.message || message;
-      } catch {}
+      } catch { }
       toast({ title: "Error", description: message, variant: "destructive" });
     },
   });
@@ -165,7 +167,7 @@ export default function Login() {
         message = json?.message || message;
         remaining = json?.remainingAttempts;
         isLocked = json?.isLocked;
-      } catch {}
+      } catch { }
 
       if (isLocked) {
         toast({ title: "Unsuccessful attempts .. Please contact HR Team !!", variant: "destructive" });
@@ -293,13 +295,7 @@ export default function Login() {
               </div>
             )}
 
-            {!domainStatus.isWhitelisted && !isExistingUser && (
-              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3">
-                <p className="text-sm text-red-200">
-                  <strong>Domain Not Whitelisted:</strong> You can proceed only if your account exists or your domain allows auto-registration.
-                </p>
-              </div>
-            )}
+
           </div>
 
           <div className="mt-6 flex justify-end gap-2">
@@ -332,8 +328,8 @@ export default function Login() {
               {sendOtpMutation.isPending
                 ? "Sending OTP..."
                 : isAutoCreateUser
-                ? "Create Account & Send OTP"
-                : "Send OTP"}
+                  ? "Create Account & Send OTP"
+                  : "Send OTP"}
             </Button>
           </div>
         </DialogContent>
@@ -384,52 +380,7 @@ export default function Login() {
             Login to your account
           </p>
 
-          {/* Domain Status Alert (informational only) */}
-          {emailDomain && domainStatus.checked && (
-            <div className="mb-6 max-w-md mx-auto">
-              <Alert
-                className={`border ${
-                  domainStatus.isWhitelisted ? "border-white/15 bg-white/5" : "border-red-500/30 bg-red-500/10"
-                } text-white`}
-              >
-                <div className="flex items-start gap-2">
-                  {domainStatus.isLoading ? (
-                    <Loader2 className="h-4 w-4 animate-spin mt-0.5" />
-                  ) : domainStatus.isWhitelisted ? (
-                    <CheckCircle className="h-4 w-4 mt-0.5" style={{ color: accent }} />
-                  ) : (
-                    <XCircle className="h-4 w-4 text-red-300 mt-0.5" />
-                  )}
-                  <AlertDescription className="text-sm text-white/80">
-                    {domainStatus.isLoading ? (
-                      "Checking domain authorization..."
-                    ) : domainStatus.isWhitelisted ? (
-                      <div className="space-y-1">
-                        <span className="font-medium" style={{ color: accent }}>
-                          Domain authorized
-                        </span>
-                        {domainStatus.domain?.autoCreateUser && (
-                          <div className="text-xs text-white/60">
-                            New users from @{emailDomain} can auto-register
-                            {domainStatus.domain.defaultPoints > 0 && (
-                              <span> with {domainStatus.domain.defaultPoints} starting points</span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="space-y-1">
-                        <span className="font-medium text-red-200">Domain not whitelisted</span>
-                        <div className="text-xs text-white/70">
-                          You may still login if your employee account already exists.
-                        </div>
-                      </div>
-                    )}
-                  </AlertDescription>
-                </div>
-              </Alert>
-            </div>
-          )}
+
 
           <div className="mx-auto max-w-xl rounded-2xl border border-white/10 bg-white/5 p-8 backdrop-blur-md">
             <form onSubmit={handleSubmit} className="space-y-7">
@@ -488,6 +439,7 @@ export default function Login() {
         }}
         primaryColor={primary}
         companyName={company}
+        isNewUser={isNewUser}
       />
     </div>
   );

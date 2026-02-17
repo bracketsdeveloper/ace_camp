@@ -7,7 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Save, X, Trash, ArrowLeft, ArrowRight, UploadIcon, Tag, Heart, Badge, Plus } from "lucide-react";
+import { Save, X, Trash, ArrowLeft, ArrowRight, UploadIcon, Tag, Heart, Plus } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { uploadFiles, move, removeAt } from "@/lib/admin-utils";
 import type { Product } from "./types";
 import type { Category } from "@/components/admin/categories/types";
@@ -85,6 +86,8 @@ export function ProductEditModal({ open, onClose, product, products, categories 
   const [packagesInput, setPackagesInput] = useState<string>("");
   const [specificationsInput, setSpecificationsInput] = useState<string>("");
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
+  const [sizeUnit, setSizeUnit] = useState<string>("");
+  const [sizeValuesInput, setSizeValuesInput] = useState<string>("");
 
   // ✅ Slab pricing rows
   const [priceSlabs, setPriceSlabs] = useState<PriceSlabRow[]>([{ minQty: "", maxQty: "", price: "" }]);
@@ -106,7 +109,17 @@ export function ProductEditModal({ open, onClose, product, products, categories 
         bulkBuy: Boolean((product as any).bulkBuy), // ✅ NEW
         backupProductId: product.backupProductId,
         categoryIds: product.categoryIds || [],
+
+        // ✅ NEW
+        gst: product.gst || "0",
+        stockStatus: (product.stockStatus as any) || "non_committed",
+        brandStore: Boolean(product.brandStore),
+        brand: product.brand || "",
       });
+
+      const sizes = (product as any).sizes as { unit: string; values: string[] } | null;
+      setSizeUnit(sizes?.unit || "");
+      setSizeValuesInput(sizes?.values?.join(", ") || "");
 
       setImages(product.images || []);
       setColorsInput((product.colors || []).join(", "));
@@ -212,6 +225,14 @@ export function ProductEditModal({ open, onClose, product, products, categories 
 
       // ✅ NEW
       bulkBuy: Boolean((formData as any).bulkBuy),
+      brandStore: Boolean((formData as any).brandStore),
+      gst: formData.gst || "0",
+      stockStatus: (formData.stockStatus as any) || "non_committed",
+      brand: (formData.brand ?? "").trim(),
+      sizes: sizeUnit ? {
+        unit: sizeUnit.trim(),
+        values: sizeValuesInput.split(",").map(v => v.trim()).filter(Boolean)
+      } : null,
 
       images: images,
       colors: colorsInput.split(",").map((s) => s.trim()).filter(Boolean),
@@ -283,6 +304,16 @@ export function ProductEditModal({ open, onClose, product, products, categories 
               </p>
             </div>
 
+            {/* GST */}
+            <div>
+              <Label htmlFor="edit-gst">GST (%)</Label>
+              <Input
+                id="edit-gst"
+                value={formData.gst || ""}
+                onChange={(e) => setFormData({ ...formData, gst: e.target.value })}
+              />
+            </div>
+
             {/* ✅ NEW: Bulk Buy */}
             <div className="md:col-span-2">
               <Label>Bulk Buy</Label>
@@ -301,6 +332,56 @@ export function ProductEditModal({ open, onClose, product, products, categories 
               <p className="text-xs text-muted-foreground mt-1">
                 If enabled, this product will appear in the Bulk Buy portal (restricted users only).
               </p>
+            </div>
+
+            {/* ✅ NEW: Brand Store */}
+            <div className="md:col-span-2">
+              <Label>Brand Store</Label>
+              <div className="flex items-center gap-2 mt-2">
+                <input
+                  id="edit-brandStore"
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={Boolean((formData as any).brandStore)}
+                  onChange={(e) => setFormData({ ...formData, brandStore: e.target.checked } as any)}
+                />
+                <Label htmlFor="edit-brandStore" className="text-sm">
+                  Show this product in Brand Store
+                </Label>
+              </div>
+            </div>
+
+            {/* Brand */}
+            <div>
+              <Label htmlFor="edit-brand">Brand Name</Label>
+              <Input
+                id="edit-brand"
+                value={formData.brand || ""}
+                onChange={(e) => setFormData({ ...formData, brand: e.target.value })}
+                placeholder="Enter brand name"
+              />
+            </div>
+
+            {/* Sizes */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="edit-size-unit">Size Unit</Label>
+                <Input
+                  id="edit-size-unit"
+                  value={sizeUnit}
+                  onChange={(e) => setSizeUnit(e.target.value)}
+                  placeholder="e.g. UK, EU, US"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-size-values">Sizes (comma-separated)</Label>
+                <Input
+                  id="edit-size-values"
+                  value={sizeValuesInput}
+                  onChange={(e) => setSizeValuesInput(e.target.value)}
+                  placeholder="e.g. 7, 8, 9, 10"
+                />
+              </div>
             </div>
 
             {/* Slab Pricing */}
@@ -501,7 +582,7 @@ export function ProductEditModal({ open, onClose, product, products, categories 
 
             {/* Stock */}
             <div>
-              <Label htmlFor="edit-stock">Stock</Label>
+              <Label htmlFor="edit-stock">Total Stock</Label>
               <Input
                 id="edit-stock"
                 type="number"
@@ -509,6 +590,35 @@ export function ProductEditModal({ open, onClose, product, products, categories 
                 value={String(formData.stock ?? 0)}
                 onChange={(e) => setFormData({ ...formData, stock: Number(e.target.value) || 0 })}
               />
+            </div>
+
+            {/* Stock Status */}
+            <div>
+              <Label>Stock Status</Label>
+              <div className="flex items-center gap-4 mt-2">
+                <label className="flex items-center gap-2 text-sm border p-2 rounded cursor-pointer">
+                  <input
+                    type="radio"
+                    name="editStockStatus"
+                    value="committed"
+                    checked={formData.stockStatus === "committed"}
+                    onChange={() => setFormData({ ...formData, stockStatus: "committed" })}
+                    className="h-4 w-4"
+                  />
+                  Committed
+                </label>
+                <label className="flex items-center gap-2 text-sm border p-2 rounded cursor-pointer">
+                  <input
+                    type="radio"
+                    name="editStockStatus"
+                    value="non_committed"
+                    checked={formData.stockStatus !== "committed"}
+                    onChange={() => setFormData({ ...formData, stockStatus: "non_committed" })}
+                    className="h-4 w-4"
+                  />
+                  Non-Committed
+                </label>
+              </div>
             </div>
 
             {/* Packages Include */}

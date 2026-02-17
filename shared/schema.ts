@@ -91,6 +91,13 @@ export const products = pgTable("products", {
   // ✅ NEW: bulk buy flag
   bulkBuy: boolean("bulk_buy").default(false),
 
+  // ✅ NEW: Extra fields
+  gst: text("gst").default("0"),
+  stockStatus: text("stock_status").default("non_committed"), // committed | non_committed
+  brandStore: boolean("brand_store").default(false),
+  brand: text("brand").default(""),
+  sizes: json("sizes").$type<{ unit: string; values: string[] } | null>().default(null),
+
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -103,10 +110,20 @@ export const orders = pgTable("orders", {
   employeeId: varchar("employee_id").references(() => employees.id).notNull(),
   productId: varchar("product_id").references(() => products.id).notNull(),
   selectedColor: text("selected_color"),
+  selectedSize: text("selected_size"),
   quantity: integer("quantity").notNull().default(1),
   status: text("status").default("confirmed"),
   orderDate: timestamp("order_date").defaultNow(),
-  metadata: json("metadata").$type<Record<string, any> | null>().default(null),
+  metadata: json("metadata").$type<{
+    usedPoints?: number;
+    unitPrice?: number;
+    copayInr?: number | null;
+    paymentId?: string | null;
+    phonepeOrderId?: string | null;
+    deliveryMethod?: "office" | "delivery" | null;
+    deliveryAddress?: string | null;
+  } | null>().default(null),
+  campaignId: varchar("campaign_id").references(() => campaigns.id),
 });
 
 /* =========================================================
@@ -117,7 +134,9 @@ export const cartItems = pgTable("cart_items", {
   employeeId: varchar("employee_id").references(() => employees.id).notNull(),
   productId: varchar("product_id").references(() => products.id).notNull(),
   selectedColor: text("selected_color"),
+  selectedSize: text("selected_size"),
   quantity: integer("quantity").notNull().default(1),
+  campaignId: varchar("campaign_id").references(() => campaigns.id),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -174,6 +193,21 @@ export const campaigns = pgTable("campaigns", {
   endDate: timestamp("end_date"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+  maxProductsPerUser: integer("max_products_per_user"), // NULL means infinite
+});
+
+/* =========================================================
+   CAMPAIGN WHITELIST
+   =======================================================*/
+export const campaignWhitelist = pgTable("campaign_whitelist", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  campaignId: varchar("campaign_id")
+    .notNull()
+    .references(() => campaigns.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  startDate: timestamp("start_date"),
+  endDate: timestamp("end_date"),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 /* =========================================================
@@ -230,6 +264,7 @@ export const bulkBuyCartItems = pgTable("bulk_buy_cart_items", {
   employeeId: varchar("employee_id").references(() => employees.id).notNull(),
   productId: varchar("product_id").references(() => products.id).notNull(),
   selectedColor: text("selected_color"),
+  selectedSize: text("selected_size"),
   quantity: integer("quantity").notNull().default(1),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -252,6 +287,7 @@ export const bulkBuyRequests = pgTable("bulk_buy_requests", {
         name: string;
         sku?: string;
         selectedColor?: string | null;
+        selectedSize?: string | null;
         quantity: number;
         unitPrice: number;
         lineTotal: number;
@@ -340,6 +376,16 @@ export const insertProductSchema = z.object({
 
   // ✅ NEW
   bulkBuy: z.boolean().default(false),
+
+  // ✅ NEW: Extra fields
+  gst: z.string().default("0"),
+  stockStatus: z.enum(["committed", "non_committed"]).default("non_committed"),
+  brandStore: z.boolean().default(false),
+  brand: z.string().default(""),
+  sizes: z.object({
+    unit: z.string(),
+    values: z.array(z.string()),
+  }).nullable().default(null),
 });
 
 export const insertOrderSchema = createInsertSchema(orders)
@@ -347,6 +393,7 @@ export const insertOrderSchema = createInsertSchema(orders)
     employeeId: true,
     productId: true,
     selectedColor: true,
+    selectedSize: true,
     quantity: true,
     metadata: true,
   })
@@ -363,13 +410,16 @@ export const insertOrderSchema = createInsertSchema(orders)
       })
       .optional()
       .nullable(),
+    campaignId: z.string().optional(),
   });
 
 export const insertCartItemSchema = createInsertSchema(cartItems).pick({
   employeeId: true,
   productId: true,
   selectedColor: true,
+  selectedSize: true,
   quantity: true,
+  campaignId: true,
 });
 
 export const insertCampaignSchema = z.object({
@@ -377,6 +427,24 @@ export const insertCampaignSchema = z.object({
   description: z.string().optional().nullable().default(null),
   imageUrl: z.string().optional().nullable().default(null),
   isActive: z.boolean().default(true),
+  startDate: z
+    .string()
+    .optional()
+    .nullable()
+    .default(null)
+    .transform((val) => (val ? new Date(val) : null)),
+  endDate: z
+    .string()
+    .optional()
+    .nullable()
+    .default(null)
+    .transform((val) => (val ? new Date(val) : null)),
+  maxProductsPerUser: z.coerce.number().int().min(1).optional().nullable().default(null),
+});
+
+export const insertCampaignWhitelistSchema = z.object({
+  campaignId: z.string().optional(), // Often taken from URL param
+  email: z.string().email("Valid email is required"),
   startDate: z
     .string()
     .optional()
@@ -449,17 +517,7 @@ export type InsertProduct = z.infer<typeof insertProductSchema>;
 export type Product = typeof products.$inferSelect;
 
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
-export type Order = typeof orders.$inferSelect & {
-  metadata: {
-    usedPoints: number;
-    unitPrice?: number;
-    copayInr?: number;
-    paymentId?: string;
-    phonepeOrderId?: string;
-    deliveryMethod?: "office" | "delivery";
-    deliveryAddress?: string;
-  } | null;
-};
+export type Order = typeof orders.$inferSelect;
 
 export type InsertCartItem = z.infer<typeof insertCartItemSchema>;
 export type CartItem = typeof cartItems.$inferSelect;
@@ -482,3 +540,7 @@ export type BulkBuyAccess = typeof bulkBuyAccess.$inferSelect;
 
 export type BulkBuyCartItem = typeof bulkBuyCartItems.$inferSelect;
 export type BulkBuyRequest = typeof bulkBuyRequests.$inferSelect;
+
+export type InsertCampaignWhitelist = z.infer<typeof insertCampaignWhitelistSchema>;
+export type CampaignWhitelist = typeof campaignWhitelist.$inferSelect;
+

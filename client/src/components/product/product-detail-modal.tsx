@@ -1,5 +1,5 @@
 // src/components/product/product-detail-modal.tsx
-import { memo, useEffect, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ interface ProductDetailModalProps {
   onColorChange: (color: string) => void;
   quantity: number;
   onQuantityChange: (qty: number) => void;
-  onAddToCart: (product: any, color: string | null, quantity: number) => void;
+  onAddToCart: (product: any, color: string | null, quantity: number, size?: string | null) => void;
 }
 
 function _ProductDetailModal({
@@ -30,10 +30,11 @@ function _ProductDetailModal({
   onAddToCart,
 }: ProductDetailModalProps) {
   const { toast } = useToast();
+  const [localSelectedSize, setLocalSelectedSize] = useState<string | null>(null);
 
   if (!product) return null;
 
-  const { data: branding } = useQuery({
+  const { data: branding } = useQuery<any>({
     queryKey: ["/api/admin/branding"],
   });
 
@@ -96,6 +97,10 @@ function _ProductDetailModal({
     return Math.ceil(linePriceInr / inrPerPoint);
   }, [linePriceInr, inrPerPoint]);
 
+  const gstPercent = parseFloat(product.gst || "0");
+  const gstAmount = linePriceInr * (gstPercent / 100);
+  const totalAmount = linePriceInr + gstAmount;
+
   // Helper function to normalize specifications data
   const normalizeSpecifications = useMemo(() => {
     if (!product.specifications) return null;
@@ -121,13 +126,19 @@ function _ProductDetailModal({
   const hasSpecifications = normalizeSpecifications && normalizeSpecifications.length > 0;
 
   useEffect(() => {
-    if (!isOpen || !product) return;
+    if (!isOpen || !product) {
+      setLocalSelectedSize(null);
+      return;
+    }
+
+    // Reset size selection when product changes
+    setLocalSelectedSize(null);
 
     const first = product.colors?.[0] || "";
     if (first && selectedColor !== first) {
       onColorChange(first);
     }
-  }, [isOpen, product?.id, product?.colors, selectedColor, onColorChange]);
+  }, [isOpen, product?.id, product?.colors, onColorChange]);
 
   const getColorStyle = (color: string) => {
     if (color.match(/^#[0-9A-Fa-f]{6}$/)) {
@@ -172,19 +183,18 @@ function _ProductDetailModal({
       return;
     }
 
-    const stock = Number(product.stock ?? 0);
-    const q = clampQty(quantity);
-
-    if (q < 1 || (Number.isFinite(stock) && q > stock)) {
+    if (product.sizes?.values?.length > 0 && !localSelectedSize) {
       toast({
         title: "Error",
-        description: `Please select a valid quantity (1 to ${stock}).`,
+        description: "Please select a size before adding to cart.",
         variant: "destructive",
       });
       return;
     }
 
-    onAddToCart(product, selectedColor || null, q);
+    const q = clampQty(quantity);
+    console.log("Modal handleAddToCart passing to onAddToCart:", { color: selectedColor, qty: q, size: localSelectedSize });
+    onAddToCart(product, selectedColor || null, q, localSelectedSize);
   };
 
   const hasColors = Array.isArray(product.colors) && product.colors.length > 0;
@@ -255,21 +265,31 @@ function _ProductDetailModal({
               </Button>
             </div>
 
-            {/* ✅ UPDATED: show per-unit points + line total points */}
-            <div className="mb-6">
-              <p
-                className="text-3xl font-bold text-blue-600"
-                data-testid="text-product-detail-points-required"
-              >
-                {pointsRequired} points <span className="text-base font-semibold text-muted-foreground">/ unit</span>
-              </p>
-              <p className="text-sm text-muted-foreground mt-2">
-                Unit Price: <span className="font-medium">₹{unitPriceInr.toFixed(2)}</span> •{" "}
-                Total for {Math.max(1, quantity)}:{" "}
-                <span className="font-medium">
-                  ₹{linePriceInr.toFixed(2)} ({linePoints} points)
+            {product.brand && (
+              <div className="mb-4">
+                <span className="text-sm font-semibold text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                  {product.brand}
                 </span>
-              </p>
+              </div>
+            )}
+
+            {/* Price Breakdown */}
+            <div className="mb-6 space-y-2 bg-white p-4 rounded-xl border shadow-sm">
+              <div className="flex justify-between items-center pb-2 border-bottom">
+                <span className="text-muted-foreground">Product Value</span>
+                <span className="font-semibold">₹{linePriceInr.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center text-sm text-muted-foreground">
+                <span>GST ({gstPercent}%)</span>
+                <span>₹{gstAmount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center pt-2 border-t mt-2">
+                <span className="text-xl font-bold">Total Amount</span>
+                <div className="text-right">
+                  <div className="text-2xl font-bold text-blue-600">₹{totalAmount.toFixed(2)}</div>
+                  <div className="text-sm text-gray-500">{linePoints} points</div>
+                </div>
+              </div>
             </div>
 
             {/* Price Slabs Table (UPDATED) */}
@@ -342,6 +362,29 @@ function _ProductDetailModal({
               </div>
             )}
 
+            {/* Size Selection */}
+            {product.sizes?.values?.length > 0 && (
+              <div className="mb-6">
+                <h4 className="font-semibold text-lg mb-3">Choose Size ({product.sizes.unit}):</h4>
+                <div className="flex flex-wrap gap-2">
+                  {product.sizes.values.map((size: string) => {
+                    const selected = localSelectedSize === size;
+                    return (
+                      <Button
+                        key={size}
+                        type="button"
+                        variant={selected ? "default" : "outline"}
+                        className={`min-w-[50px] ${selected ? "bg-blue-600 hover:bg-blue-700" : ""}`}
+                        onClick={() => setLocalSelectedSize(size)}
+                      >
+                        {size}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Color Selection */}
             {hasColors ? (
               <div className="mb-6">
@@ -353,11 +396,10 @@ function _ProductDetailModal({
                       <button
                         key={color}
                         type="button"
-                        className={`w-12 h-12 rounded-full border-2 transition-all duration-200 ${
-                          selected
-                            ? "ring-2 ring-blue-500 ring-offset-2"
-                            : "border-gray-300 hover:border-blue-400"
-                        } ${getColorStyle(color)}`}
+                        className={`w-12 h-12 rounded-full border-2 transition-all duration-200 ${selected
+                          ? "ring-2 ring-blue-500 ring-offset-2"
+                          : "border-gray-300 hover:border-blue-400"
+                          } ${getColorStyle(color)}`}
                         style={getColorInlineStyle(color)}
                         onClick={() => {
                           if (!selected) onColorChange(color);

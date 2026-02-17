@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Package, Users, Heart, Globe, Shield } from "lucide-react";
 import type { Product } from "@/types/product";
-import csrImage from '@assets/csr.jpg'; // Add this import at the top
+import csrImage from '@assets/csr.jpg';
 
 function CSRProductCard({ product }: { product: Product }) {
   // Parse specifications if they come as a string
@@ -117,7 +117,7 @@ function CSRProductCard({ product }: { product: Product }) {
             </div>
           )}
           
-          {/* Categories */}
+          {/* Categories - Already showing unique categories per product */}
           {product.categories && product.categories.length > 0 && (
             <div>
               <h4 className="font-medium text-gray-900 mb-2">Categories</h4>
@@ -175,6 +175,11 @@ export default function CSRSupportPage() {
   // Filter products with csrSupport flag set to true
   const csrProducts = products.filter(product => product.csrSupport === true);
 
+  // Calculate unique categories count
+  const uniqueCategoriesCount = new Set(
+    csrProducts.flatMap(p => p.categories?.map(c => c.id) || [])
+  ).size;
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-green-50 to-white">
       <Header />
@@ -189,13 +194,17 @@ export default function CSRSupportPage() {
           backgroundRepeat: "no-repeat",
         }}
       >
-        {/* Optional gradient overlay for better text readability */}
+        {/* Gradient overlay for better text readability */}
         <div className="absolute inset-0 bg-gradient-to-r from-green-900/30 via-transparent to-teal-900/30"></div>
         
         <div className="relative z-10 h-full flex items-center justify-center text-center text-white px-4">
           <div className="max-w-4xl">
-            
-            
+            <h1 className="text-4xl md:text-5xl font-bold mb-4 drop-shadow-lg">
+              Corporate Social Responsibility
+            </h1>
+            <p className="text-xl md:text-2xl drop-shadow-md max-w-2xl mx-auto">
+              Making a positive impact on communities and the environment through sustainable practices
+            </p>
           </div>
         </div>
       </div>
@@ -219,9 +228,9 @@ export default function CSRSupportPage() {
                 <Users className="w-6 h-6 text-blue-600" />
               </div>
               <div className="text-3xl font-bold text-gray-900 mb-1">
-                {new Set(csrProducts.flatMap(p => p.categories || [])).size}
+                {uniqueCategoriesCount}
               </div>
-              <p className="text-gray-600">Categories Covered</p>
+              <p className="text-gray-600">Unique Categories</p>
             </CardContent>
           </Card>
           
@@ -230,7 +239,7 @@ export default function CSRSupportPage() {
               <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-3">
                 <Globe className="w-6 h-6 text-purple-600" />
               </div>
-              <div className="text-3xl font-bold text-gray-900 mb-1">100%</div>
+              <div className="text-3xl font-bold text-gray-900 mb-1">90%</div>
               <p className="text-gray-600">Sustainable Sourcing</p>
             </CardContent>
           </Card>
@@ -240,7 +249,7 @@ export default function CSRSupportPage() {
               <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-3">
                 <Shield className="w-6 h-6 text-amber-600" />
               </div>
-              <div className="text-3xl font-bold text-gray-900 mb-1">100%</div>
+              <div className="text-3xl font-bold text-gray-900 mb-1">90%</div>
               <p className="text-gray-600">Ethically Produced</p>
             </CardContent>
           </Card>

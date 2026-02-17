@@ -15,6 +15,7 @@ import {
   type Campaign,
   insertBlogSchema,
   type Blog,
+  insertCampaignWhitelistSchema,
 } from "@shared/schema";
 import { employeeRoleSchema } from "@shared/schema"; // <-- add this export in shared/schema.ts as shown earlier
 import { storage } from "./storage";
@@ -251,9 +252,9 @@ export async function registerRoutes(app: Express): Promise<void> {
     try {
       const { domain } = req.params;
       const domainRecord = await storage.getDomainWhitelistByDomain(domain.toLowerCase());
-      res.json({ 
+      res.json({
         isWhitelisted: !!domainRecord && domainRecord.isActive,
-        domain: domainRecord 
+        domain: domainRecord
       });
     } catch (error: any) {
       console.error("Domain check error:", error);
@@ -317,13 +318,13 @@ export async function registerRoutes(app: Express): Promise<void> {
       const domainData = insertDomainWhitelistSchema.parse(req.body);
       // Ensure domain doesn't start with @ and is lowercase
       domainData.domain = domainData.domain.toLowerCase().replace(/^@/, '');
-      
+
       // Check if domain already exists
       const existing = await storage.getDomainWhitelistByDomain(domainData.domain);
       if (existing) {
         return res.status(409).json({ message: "Domain already exists" });
       }
-      
+
       const domain = await storage.createDomainWhitelist(domainData);
       res.json(domain);
     } catch (error: any) {
@@ -336,11 +337,11 @@ export async function registerRoutes(app: Express): Promise<void> {
     try {
       const { id } = req.params;
       const updates = insertDomainWhitelistSchema.partial().parse(req.body);
-      
+
       if (updates.domain) {
         updates.domain = updates.domain.toLowerCase().replace(/^@/, '');
       }
-      
+
       const domain = await storage.updateDomainWhitelist(id, updates);
       if (!domain) return res.status(404).json({ message: "Domain not found" });
       res.json(domain);
@@ -423,11 +424,11 @@ export async function registerRoutes(app: Express): Promise<void> {
       const categories = await storage.getAllCategories();
       const categoryMap = buildCategoryMap(categories);
       const enriched = all.map((product) => attachCategoriesToProduct(product, categoryMap));
-      
+
       // Get all campaign product IDs
       const campaigns = await storage.getAllCampaigns();
       const campaignProductIds = new Set<string>();
-      
+
       for (const campaign of campaigns) {
         if (campaign.isActive) {
           const campaignProducts = await storage.getCampaignProducts(campaign.id);
@@ -436,7 +437,7 @@ export async function registerRoutes(app: Express): Promise<void> {
           });
         }
       }
-      
+
       const byId = new Map(enriched.map((p) => [p.id, p]));
       const backupCandidateIds = new Set(
         enriched
@@ -445,21 +446,21 @@ export async function registerRoutes(app: Express): Promise<void> {
       );
       const originals = enriched.filter((p) => !backupCandidateIds.has(p.id));
       const visible: any[] = [];
-      
+
       for (const orig of originals) {
         const origStock = Number(orig.stock || 0);
-        
-        // Skip products that are in active campaigns
-        if (campaignProductIds.has(orig.id)) {
+
+        // Skip products that are in active campaigns, UNLESS they are marked as brandStore
+        if (campaignProductIds.has(orig.id) && !orig.brandStore) {
           continue;
         }
-        
+
         if (origStock > 0) {
           visible.push(orig);
         } else if (origStock <= 0 && orig.backupProductId) {
           const backup = byId.get(orig.backupProductId);
-          // Also check if backup product is in a campaign
-          if (backup && Number(backup.stock || 0) > 0 && backup.isActive !== false && !campaignProductIds.has(backup.id)) {
+          // Also check if backup product is in a campaign (unless brandStore)
+          if (backup && Number(backup.stock || 0) > 0 && backup.isActive !== false && (!campaignProductIds.has(backup.id) || backup.brandStore)) {
             visible.push({
               ...backup,
               isBackup: true,
@@ -480,11 +481,11 @@ export async function registerRoutes(app: Express): Promise<void> {
       const categories = await storage.getAllCategories();
       const categoryMap = buildCategoryMap(categories);
       const productsWithBackups: any[] = [];
-      
+
       for (const product of products) {
         const enrichedProduct = attachCategoriesToProduct(product, categoryMap);
         productsWithBackups.push(enrichedProduct);
-        
+
         if (product.stock === 0 && product.backupProductId) {
           const backupProduct = await storage.getProduct(product.backupProductId);
           if (backupProduct && (backupProduct.stock || 0) > 0) {
@@ -507,11 +508,11 @@ export async function registerRoutes(app: Express): Promise<void> {
     try {
       const product = await storage.getProduct(req.params.id);
       if (!product) return res.status(404).json({ message: "Product not found" });
-      
+
       const categories = await storage.getAllCategories();
       const categoryMap = buildCategoryMap(categories);
       const enrichedProduct = attachCategoriesToProduct(product, categoryMap);
-      
+
       res.json(enrichedProduct);
     } catch {
       res.status(500).json({ message: "Error fetching product" });
@@ -522,17 +523,17 @@ export async function registerRoutes(app: Express): Promise<void> {
   app.get("/api/csr-products", async (_req, res) => {
     try {
       const allProducts = await storage.getAllProducts();
-      const csrProducts = allProducts.filter(product => 
+      const csrProducts = allProducts.filter(product =>
         product.csrSupport === true && product.isActive === true
       );
-      
+
       const categories = await storage.getAllCategories();
       const categoryMap = buildCategoryMap(categories);
-      
-      const enrichedProducts = csrProducts.map((product) => 
+
+      const enrichedProducts = csrProducts.map((product) =>
         attachCategoriesToProduct(product, categoryMap)
       );
-      
+
       res.json(enrichedProducts);
     } catch (error: any) {
       console.error("CSR products fetch error:", error);
@@ -550,13 +551,19 @@ export async function registerRoutes(app: Express): Promise<void> {
       const items = await storage.getCartItems(session.employeeId);
       const categories = await storage.getAllCategories();
       const categoryMap = buildCategoryMap(categories);
-      
+
       const detailedItems = await Promise.all(
         items.map(async (item) => {
           const product = await storage.getProduct(item.productId);
+          let campaign = null;
+          if (item.campaignId) {
+            campaign = await storage.getCampaign(item.campaignId);
+          }
           return {
             ...item,
-            product: product ? attachCategoriesToProduct(product, categoryMap) : null
+            selectedSize: item.selectedSize,
+            product: product ? attachCategoriesToProduct(product, categoryMap) : null,
+            campaign
           };
         })
       );
@@ -585,18 +592,56 @@ export async function registerRoutes(app: Express): Promise<void> {
       const product = await storage.getProduct(data.productId);
       if (!product) return res.status(404).json({ message: "Product not found" });
 
-      const selectedColor = data.selectedColor ?? null;
       const requestedQty = data.quantity ?? 1;
 
       if ((product.stock || 0) < requestedQty) {
         return res.status(400).json({ message: "Insufficient stock" });
       }
 
+      // Check Campaign Limits
+      if (data.campaignId) {
+        const campaign = await storage.getCampaign(data.campaignId);
+        if (campaign && campaign.isActive && campaign.maxProductsPerUser !== null) {
+          const employeeOrders = await storage.getOrdersByEmployeeId(employee.id);
+          const currentCart = await storage.getCartItems(employee.id);
+
+          const limit = campaign.maxProductsPerUser;
+          let usage = 0;
+
+          // Filter orders/cart by this campaignId if we switch to explicit tracking
+          // Since we just added campaignId column, old orders won't have it.
+          // We should use the hybrid approach: Check explicit campaignId OR product association for backward compat if needed?
+          // User requested "campaign orders must be placed seperately".
+          // Let's rely on the explicit campaignId for new logic.
+
+          employeeOrders.forEach(o => {
+            if (o.campaignId === campaign.id) usage += (o.quantity || 1);
+          });
+          currentCart.forEach(c => {
+            if (c.campaignId === campaign.id) usage += (c.quantity || 1);
+          });
+
+          if (usage + requestedQty > limit) {
+            return res.status(400).json({
+              message: `Campaign limit reached. You can only select ${limit} products for "${campaign.name}".`
+            });
+          }
+        }
+      } else {
+        // Fallback or implicit check? 
+        // If no campaignId provided, we assume regular purchase.
+        // But what if the product is ONLY available in a campaign?
+        // The product might be "active" generally.
+        // We'll skip campaign limit checks if no campaignId is explicitly passed, 
+        // assuming the frontend handles the context.
+      }
+
       const currentItems = await storage.getCartItems(employee.id);
       const existing = currentItems.find(
         (it) =>
           it.productId === data.productId &&
-          (it.selectedColor ?? null) === (selectedColor ?? null)
+          (it.selectedColor ?? null) === (data.selectedColor ?? null) &&
+          (it.selectedSize ?? null) === (data.selectedSize ?? null)
       );
 
       if (existing) {
@@ -611,8 +656,10 @@ export async function registerRoutes(app: Express): Promise<void> {
       const item = await storage.createCartItem({
         employeeId: employee.id,
         productId: data.productId,
-        selectedColor: selectedColor ?? undefined,
+        selectedColor: data.selectedColor || null,
+        selectedSize: data.selectedSize || null,
         quantity: requestedQty,
+        campaignId: data.campaignId,
       });
       res.json(item);
     } catch (error: any) {
@@ -635,6 +682,43 @@ export async function registerRoutes(app: Express): Promise<void> {
       if ((product.stock || 0) < quantity) {
         return res.status(400).json({ message: "Insufficient stock" });
       }
+
+      // Check Campaign Limits for Update
+      const productCampaigns = await storage.getProductCampaigns(product.id);
+      const activeCampaignsWithLimit = productCampaigns.filter(c => c.isActive && c.maxProductsPerUser !== null);
+
+      if (activeCampaignsWithLimit.length > 0) {
+        const employee = await storage.getEmployee(item.employeeId);
+        if (employee) {
+          const employeeOrders = await storage.getOrdersByEmployeeId(employee.id);
+          const currentCart = await storage.getCartItems(employee.id);
+
+          for (const campaign of activeCampaignsWithLimit) {
+            const limit = campaign.maxProductsPerUser!;
+            const campaignProducts = await storage.getCampaignProducts(campaign.id);
+            const campaignProductIds = new Set(campaignProducts.map(cp => cp.product.id));
+
+            let usage = 0;
+            employeeOrders.forEach(o => {
+              if (campaignProductIds.has(o.productId)) usage += (o.quantity || 1);
+            });
+
+            // Count cart EXCLUDING the current item being updated
+            currentCart.forEach(c => {
+              if (c.id !== item.id && campaignProductIds.has(c.productId)) {
+                usage += (c.quantity || 1);
+              }
+            });
+
+            if (usage + quantity > limit) {
+              return res.status(400).json({
+                message: `Campaign limit reached. You can only select ${limit} products for "${campaign.name}".`
+              });
+            }
+          }
+        }
+      }
+
       const updated = await storage.updateCartItem(id, { quantity });
       res.json(updated);
     } catch (error: any) {
@@ -658,60 +742,62 @@ export async function registerRoutes(app: Express): Promise<void> {
     try {
       const token = req.headers.authorization?.replace("Bearer ", "");
       if (!token) return res.status(401).json({ message: "No token provided" });
-  
+
       const session = await storage.getSession(token);
       if (!session) return res.status(401).json({ message: "Invalid session" });
-  
+
       const employee = await storage.getEmployee(session.employeeId);
       if (!employee) return res.status(404).json({ message: "Employee not found" });
-  
+
       const branding = await storage.getBranding();
       const maxSelections = branding?.maxSelectionsPerUser ?? 1;
-  
+
       const { deliveryMethod = "office", deliveryAddress = null } = req.body;
-  
+
       const cartItems = await storage.getCartItems(session.employeeId);
       if (cartItems.length === 0) return res.status(400).json({ message: "Cart is empty" });
-  
+
       const employeeOrders = await storage.getOrdersByEmployeeId(session.employeeId);
       if (maxSelections !== -1 && employeeOrders.length + cartItems.length > maxSelections) {
         return res.status(400).json({ message: "Selection limit reached" });
       }
-  
+
       const inrPerPoint = parseFloat(branding?.inrPerPoint ?? "1");
       let totalPointsRequired = 0;
-  
+
       // ✅ slab-aware points calc
       for (const item of cartItems) {
         const p = await storage.getProduct(item.productId);
         if (!p || (p.stock || 0) < item.quantity) {
           return res.status(400).json({ message: `Product ${p?.name || item.productId} unavailable` });
         }
-  
+
         const unitPrice = getUnitPriceForQty(p, item.quantity);
         totalPointsRequired += Math.ceil(unitPrice / inrPerPoint) * item.quantity;
       }
-  
+
       const userPoints = employee.points ?? 0;
       if (userPoints < totalPointsRequired) {
         return res.status(400).json({ message: "Insufficient points" });
       }
-  
+
       const orders: any[] = [];
       for (const item of cartItems) {
         const p = await storage.getProduct(item.productId);
         if (!p) continue;
-  
+
         await storage.updateProduct(item.productId, { stock: (p.stock || 0) - item.quantity });
-  
+
         const unitPrice = getUnitPriceForQty(p, item.quantity);
         const usedPoints = Math.ceil(unitPrice / inrPerPoint) * item.quantity;
-  
+
         const order = await storage.createOrder({
           employeeId: session.employeeId,
           productId: item.productId,
           selectedColor: item.selectedColor,
+          selectedSize: item.selectedSize,
           quantity: item.quantity,
+          campaignId: item.campaignId || undefined,
           metadata: {
             usedPoints,
             unitPrice,
@@ -719,13 +805,13 @@ export async function registerRoutes(app: Express): Promise<void> {
             deliveryAddress,
           },
         });
-  
+
         orders.push({ order, product: p });
       }
-  
+
       await storage.updateEmployee(employee.id, { points: userPoints - totalPointsRequired });
       await storage.clearCart(session.employeeId);
-  
+
       const updatedEmployee = await storage.getEmployee(session.employeeId);
       res.json({ orders, employee: updatedEmployee });
     } catch (error: any) {
@@ -733,309 +819,311 @@ export async function registerRoutes(app: Express): Promise<void> {
       res.status(500).json({ message: "Error creating orders", details: error.message });
     }
   });
-  
 
-// ===============================
-// PhonePe Payment Routes (UPDATED)
-// Uses .env:
-// PHONEPE_MERCHANT_ID
-// PHONEPE_SALT_KEY
-// PHONEPE_SALT_INDEX
-// PHONEPE_REDIRECT_URL_BASE  (frontend base URL)
-// Optional (if you want): PHONEPE_API_URL
-// ===============================
-app.post("/api/orders/create-copay-order", async (req, res) => {
-  try {
-    const token = req.headers.authorization?.replace("Bearer ", "");
-    if (!token) return res.status(401).json({ message: "No token" });
 
-    const session = await storage.getSession(token);
-    if (!session) return res.status(401).json({ message: "Invalid session" });
+  // ===============================
+  // PhonePe Payment Routes (UPDATED)
+  // Uses .env:
+  // PHONEPE_MERCHANT_ID
+  // PHONEPE_SALT_KEY
+  // PHONEPE_SALT_INDEX
+  // PHONEPE_REDIRECT_URL_BASE  (frontend base URL)
+  // Optional (if you want): PHONEPE_API_URL
+  // ===============================
+  app.post("/api/orders/create-copay-order", async (req, res) => {
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      if (!token) return res.status(401).json({ message: "No token" });
 
-    const employee = await storage.getEmployee(session.employeeId);
-    if (!employee) return res.status(404).json({ message: "Employee not found" });
+      const session = await storage.getSession(token);
+      if (!session) return res.status(401).json({ message: "Invalid session" });
 
-    const { deliveryMethod = "office", deliveryAddress = null } = req.body;
+      const employee = await storage.getEmployee(session.employeeId);
+      if (!employee) return res.status(404).json({ message: "Employee not found" });
 
-    const cartItems = await storage.getCartItems(session.employeeId);
-    if (cartItems.length === 0) return res.status(400).json({ message: "Cart is empty" });
+      const { deliveryMethod = "office", deliveryAddress = null } = req.body;
 
-    const branding = await storage.getBranding();
-    const maxSelections = branding?.maxSelectionsPerUser ?? 1;
+      const cartItems = await storage.getCartItems(session.employeeId);
+      if (cartItems.length === 0) return res.status(400).json({ message: "Cart is empty" });
 
-    const employeeOrders = await storage.getOrdersByEmployeeId(session.employeeId);
-    if (maxSelections !== -1 && employeeOrders.length + cartItems.length > maxSelections) {
-      return res.status(400).json({ message: "Selection limit reached" });
-    }
+      const branding = await storage.getBranding();
+      const maxSelections = branding?.maxSelectionsPerUser ?? 1;
 
-    const inrPerPoint = parseFloat(branding?.inrPerPoint ?? "1");
-    let totalPointsRequired = 0;
-
-    // ✅ slab-aware points calc
-    for (const item of cartItems) {
-      const product = await storage.getProduct(item.productId);
-      if (!product || (product.stock || 0) < item.quantity) {
-        return res
-          .status(400)
-          .json({ message: `Product ${product?.name || item.productId} unavailable` });
+      const employeeOrders = await storage.getOrdersByEmployeeId(session.employeeId);
+      if (maxSelections !== -1 && employeeOrders.length + cartItems.length > maxSelections) {
+        return res.status(400).json({ message: "Selection limit reached" });
       }
 
-      const unitPrice = getUnitPriceForQty(product, item.quantity);
-      totalPointsRequired += Math.ceil(unitPrice / inrPerPoint) * item.quantity;
-    }
+      const inrPerPoint = parseFloat(branding?.inrPerPoint ?? "1");
+      let totalPointsRequired = 0;
 
-    const userPoints = employee.points ?? 0;
-    if (userPoints >= totalPointsRequired) {
-      return res.status(400).json({ message: "Sufficient points, use normal checkout" });
-    }
+      // ✅ slab-aware points calc
+      for (const item of cartItems) {
+        const product = await storage.getProduct(item.productId);
+        if (!product || (product.stock || 0) < item.quantity) {
+          return res
+            .status(400)
+            .json({ message: `Product ${product?.name || item.productId} unavailable` });
+        }
 
-    const deficitPoints = totalPointsRequired - userPoints;
-    const copayInr = Math.ceil(deficitPoints * inrPerPoint);
-
-    const merchantId = process.env.PHONEPE_MERCHANT_ID;
-    const saltKey = process.env.PHONEPE_SALT_KEY;
-    const saltIndex = process.env.PHONEPE_SALT_INDEX || "1";
-    const redirectBase = process.env.PHONEPE_REDIRECT_URL_BASE;
-    const apiUrl = process.env.PHONEPE_API_URL || "https://api-preprod.phonepe.com/apis/pg-sandbox";
-
-    if (!merchantId || !saltKey || !redirectBase) {
-      return res.status(500).json({
-        message:
-          "PhonePe not configured. Missing PHONEPE_MERCHANT_ID / PHONEPE_SALT_KEY / PHONEPE_REDIRECT_URL_BASE",
-      });
-    }
-
-    const merchantTransactionId = `TXN_${Date.now()}`;
-    const redirectUrl = `${redirectBase.replace(/\/$/, "")}/cart`;
-
-    const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol;
-    const host = (req.headers["x-forwarded-host"] as string) || req.get("host");
-    const backendBase = `${proto}://${host}`;
-
-    let callbackUrl =
-      `${backendBase}/api/orders/phonepe-callback` +
-      `?merchantTransactionId=${encodeURIComponent(merchantTransactionId)}` +
-      `&deliveryMethod=${encodeURIComponent(deliveryMethod)}`;
-
-    if (deliveryAddress) {
-      callbackUrl += `&deliveryAddress=${encodeURIComponent(deliveryAddress)}`;
-    }
-
-    const payload = {
-      merchantId,
-      merchantTransactionId,
-      merchantUserId: employee.id,
-      amount: copayInr * 100,
-      redirectUrl,
-      redirectMode: "REDIRECT",
-      callbackUrl,
-      mobileNumber: employee.phoneNumber?.replace(/^\+91/, ""),
-      paymentInstrument: { type: "PAY_PAGE" },
-    };
-
-    const base64Payload = Buffer.from(JSON.stringify(payload)).toString("base64");
-    const endpoint = "/pg/v1/pay";
-
-    const stringToHash = base64Payload + endpoint + saltKey;
-    const sha256 = crypto.createHash("sha256").update(stringToHash).digest("hex");
-    const xVerify = sha256 + "###" + saltIndex;
-
-    const response = await fetch(`${apiUrl}${endpoint}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-VERIFY": xVerify,
-      },
-      body: JSON.stringify({ request: base64Payload }),
-    });
-
-    const result = await response.json();
-
-    if (!response.ok || !result?.success) {
-      return res.status(500).json({
-        message: "Failed to initiate PhonePe payment",
-        details: result,
-      });
-    }
-
-    const paymentUrl =
-      result?.data?.instrumentResponse?.redirectInfo?.url ||
-      result?.data?.instrumentResponse?.redirectInfo?.redirectUrl;
-
-    if (!paymentUrl) {
-      return res.status(500).json({ message: "PhonePe redirect URL missing", details: result });
-    }
-
-    res.json({
-      paymentUrl,
-      merchantTransactionId,
-    });
-  } catch (error: any) {
-    console.error("create-copay-order error:", error);
-    res.status(500).json({ message: "Failed to create copay order", details: error.message });
-  }
-});
-
-
-app.post("/api/orders/phonepe-callback", async (req, res) => {
-  try {
-    const { code } = req.body;
-    const { merchantTransactionId, deliveryMethod, deliveryAddress } = req.query;
-
-    const redirectBase = process.env.PHONEPE_REDIRECT_URL_BASE || "http://localhost:5173";
-    const frontendCart = `${redirectBase.replace(/\/$/, "")}/cart`;
-
-    // PhonePe can hit callback for success/failure depending on integration
-    if (code !== "PAYMENT_SUCCESS") {
-      return res.redirect(`${frontendCart}?payment=failure`);
-    }
-
-    if (merchantTransactionId && deliveryMethod) {
-      const qs =
-        `merchantTransactionId=${encodeURIComponent(merchantTransactionId as string)}` +
-        `&deliveryMethod=${encodeURIComponent(deliveryMethod as string)}` +
-        (deliveryAddress ? `&deliveryAddress=${encodeURIComponent(deliveryAddress as string)}` : "");
-
-      return res.redirect(`${frontendCart}?${qs}`);
-    }
-
-    return res.redirect(`${frontendCart}?payment=success`);
-  } catch (error: any) {
-    console.error("PhonePe callback error:", error);
-    const redirectBase = process.env.PHONEPE_REDIRECT_URL_BASE || "http://localhost:5173";
-    return res.redirect(`${redirectBase.replace(/\/$/, "")}/cart?payment=failure`);
-  }
-});
-
-app.post("/api/orders/verify-copay", async (req, res) => {
-  try {
-    const {
-      merchantTransactionId,
-      merchantOrderId,
-      deliveryMethod = "office",
-      deliveryAddress = null,
-    } = req.body;
-
-    const txnId = merchantTransactionId || merchantOrderId;
-    if (!txnId) return res.status(400).json({ message: "Missing merchantTransactionId" });
-
-    const merchantId = process.env.PHONEPE_MERCHANT_ID;
-    const saltKey = process.env.PHONEPE_SALT_KEY;
-    const saltIndex = process.env.PHONEPE_SALT_INDEX || "1";
-    const apiUrl = process.env.PHONEPE_API_URL || "https://api-preprod.phonepe.com/apis/pg-sandbox";
-
-    if (!merchantId || !saltKey) {
-      return res.status(500).json({ message: "PhonePe not configured" });
-    }
-
-    const endpoint = `/pg/v1/status/${merchantId}/${txnId}`;
-    const stringToHash = endpoint + saltKey;
-    const sha256 = crypto.createHash("sha256").update(stringToHash).digest("hex");
-    const xVerify = sha256 + "###" + saltIndex;
-
-    const response = await fetch(`${apiUrl}${endpoint}`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "X-VERIFY": xVerify,
-        "X-MERCHANT-ID": merchantId,
-      },
-    });
-
-    const result = await response.json();
-
-    if (!response.ok || !result?.success || result?.code !== "PAYMENT_SUCCESS") {
-      return res.status(400).json({ message: "Payment not completed", details: result });
-    }
-
-    const token = req.headers.authorization?.replace("Bearer ", "");
-    if (!token) return res.status(401).json({ message: "No token" });
-
-    const session = await storage.getSession(token);
-    if (!session) return res.status(401).json({ message: "Invalid session" });
-
-    const employee = await storage.getEmployee(session.employeeId);
-    if (!employee) return res.status(404).json({ message: "Employee not found" });
-
-    const branding = await storage.getBranding();
-    const maxSelections = branding?.maxSelectionsPerUser ?? 1;
-
-    const employeeOrders = await storage.getOrdersByEmployeeId(session.employeeId);
-    const cartItems = await storage.getCartItems(session.employeeId);
-
-    if (cartItems.length === 0) return res.status(400).json({ message: "Cart is empty" });
-    if (maxSelections !== -1 && employeeOrders.length + cartItems.length > maxSelections) {
-      return res.status(400).json({ message: "Selection limit reached" });
-    }
-
-    const inrPerPoint = parseFloat(branding?.inrPerPoint ?? "1");
-    let totalPointsRequired = 0;
-
-    // ✅ slab-aware points calc
-    for (const item of cartItems) {
-      const product = await storage.getProduct(item.productId);
-      if (!product || (product.stock || 0) < item.quantity) {
-        return res
-          .status(400)
-          .json({ message: `Product ${product?.name || item.productId} unavailable` });
+        const unitPrice = getUnitPriceForQty(product, item.quantity);
+        totalPointsRequired += Math.ceil(unitPrice / inrPerPoint) * item.quantity;
       }
 
-      const unitPrice = getUnitPriceForQty(product, item.quantity);
-      totalPointsRequired += Math.ceil(unitPrice / inrPerPoint) * item.quantity;
+      const userPoints = employee.points ?? 0;
+      if (userPoints >= totalPointsRequired) {
+        return res.status(400).json({ message: "Sufficient points, use normal checkout" });
+      }
+
+      const deficitPoints = totalPointsRequired - userPoints;
+      const copayInr = Math.ceil(deficitPoints * inrPerPoint);
+
+      const merchantId = process.env.PHONEPE_MERCHANT_ID;
+      const saltKey = process.env.PHONEPE_SALT_KEY;
+      const saltIndex = process.env.PHONEPE_SALT_INDEX || "1";
+      const redirectBase = process.env.PHONEPE_REDIRECT_URL_BASE;
+      const apiUrl = process.env.PHONEPE_API_URL || "https://api-preprod.phonepe.com/apis/pg-sandbox";
+
+      if (!merchantId || !saltKey || !redirectBase) {
+        return res.status(500).json({
+          message:
+            "PhonePe not configured. Missing PHONEPE_MERCHANT_ID / PHONEPE_SALT_KEY / PHONEPE_REDIRECT_URL_BASE",
+        });
+      }
+
+      const merchantTransactionId = `TXN_${Date.now()}`;
+      const redirectUrl = `${redirectBase.replace(/\/$/, "")}/cart`;
+
+      const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol;
+      const host = (req.headers["x-forwarded-host"] as string) || req.get("host");
+      const backendBase = `${proto}://${host}`;
+
+      let callbackUrl =
+        `${backendBase}/api/orders/phonepe-callback` +
+        `?merchantTransactionId=${encodeURIComponent(merchantTransactionId)}` +
+        `&deliveryMethod=${encodeURIComponent(deliveryMethod)}`;
+
+      if (deliveryAddress) {
+        callbackUrl += `&deliveryAddress=${encodeURIComponent(deliveryAddress)}`;
+      }
+
+      const payload = {
+        merchantId,
+        merchantTransactionId,
+        merchantUserId: employee.id,
+        amount: copayInr * 100,
+        redirectUrl,
+        redirectMode: "REDIRECT",
+        callbackUrl,
+        mobileNumber: employee.phoneNumber?.replace(/^\+91/, ""),
+        paymentInstrument: { type: "PAY_PAGE" },
+      };
+
+      const base64Payload = Buffer.from(JSON.stringify(payload)).toString("base64");
+      const endpoint = "/pg/v1/pay";
+
+      const stringToHash = base64Payload + endpoint + saltKey;
+      const sha256 = crypto.createHash("sha256").update(stringToHash).digest("hex");
+      const xVerify = sha256 + "###" + saltIndex;
+
+      const response = await fetch(`${apiUrl}${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-VERIFY": xVerify,
+        },
+        body: JSON.stringify({ request: base64Payload }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result?.success) {
+        return res.status(500).json({
+          message: "Failed to initiate PhonePe payment",
+          details: result,
+        });
+      }
+
+      const paymentUrl =
+        result?.data?.instrumentResponse?.redirectInfo?.url ||
+        result?.data?.instrumentResponse?.redirectInfo?.redirectUrl;
+
+      if (!paymentUrl) {
+        return res.status(500).json({ message: "PhonePe redirect URL missing", details: result });
+      }
+
+      res.json({
+        paymentUrl,
+        merchantTransactionId,
+      });
+    } catch (error: any) {
+      console.error("create-copay-order error:", error);
+      res.status(500).json({ message: "Failed to create copay order", details: error.message });
     }
+  });
 
-    const userPoints = employee.points ?? 0;
-    if (userPoints >= totalPointsRequired) {
-      return res.status(400).json({ message: "Sufficient points" });
+
+  app.post("/api/orders/phonepe-callback", async (req, res) => {
+    try {
+      const { code } = req.body;
+      const { merchantTransactionId, deliveryMethod, deliveryAddress } = req.query;
+
+      const redirectBase = process.env.PHONEPE_REDIRECT_URL_BASE || "http://localhost:5173";
+      const frontendCart = `${redirectBase.replace(/\/$/, "")}/cart`;
+
+      // PhonePe can hit callback for success/failure depending on integration
+      if (code !== "PAYMENT_SUCCESS") {
+        return res.redirect(`${frontendCart}?payment=failure`);
+      }
+
+      if (merchantTransactionId && deliveryMethod) {
+        const qs =
+          `merchantTransactionId=${encodeURIComponent(merchantTransactionId as string)}` +
+          `&deliveryMethod=${encodeURIComponent(deliveryMethod as string)}` +
+          (deliveryAddress ? `&deliveryAddress=${encodeURIComponent(deliveryAddress as string)}` : "");
+
+        return res.redirect(`${frontendCart}?${qs}`);
+      }
+
+      return res.redirect(`${frontendCart}?payment=success`);
+    } catch (error: any) {
+      console.error("PhonePe callback error:", error);
+      const redirectBase = process.env.PHONEPE_REDIRECT_URL_BASE || "http://localhost:5173";
+      return res.redirect(`${redirectBase.replace(/\/$/, "")}/cart?payment=failure`);
     }
+  });
 
-    const deficitPoints = totalPointsRequired - userPoints;
-    const copayInr = Math.ceil(deficitPoints * inrPerPoint);
+  app.post("/api/orders/verify-copay", async (req, res) => {
+    try {
+      const {
+        merchantTransactionId,
+        merchantOrderId,
+        deliveryMethod = "office",
+        deliveryAddress = null,
+      } = req.body;
 
-    const paidAmount = (result?.data?.amount ?? 0) / 100;
-    if (paidAmount !== copayInr) {
-      return res.status(400).json({ message: "Amount mismatch", expected: copayInr, paid: paidAmount });
-    }
+      const txnId = merchantTransactionId || merchantOrderId;
+      if (!txnId) return res.status(400).json({ message: "Missing merchantTransactionId" });
 
-    const orders: any[] = [];
-    for (const item of cartItems) {
-      const product = await storage.getProduct(item.productId);
-      if (!product) continue;
+      const merchantId = process.env.PHONEPE_MERCHANT_ID;
+      const saltKey = process.env.PHONEPE_SALT_KEY;
+      const saltIndex = process.env.PHONEPE_SALT_INDEX || "1";
+      const apiUrl = process.env.PHONEPE_API_URL || "https://api-preprod.phonepe.com/apis/pg-sandbox";
 
-      await storage.updateProduct(item.productId, { stock: (product.stock || 0) - item.quantity });
+      if (!merchantId || !saltKey) {
+        return res.status(500).json({ message: "PhonePe not configured" });
+      }
 
-      const unitPrice = getUnitPriceForQty(product, item.quantity);
-      const usedPoints = Math.ceil(unitPrice / inrPerPoint) * item.quantity;
+      const endpoint = `/pg/v1/status/${merchantId}/${txnId}`;
+      const stringToHash = endpoint + saltKey;
+      const sha256 = crypto.createHash("sha256").update(stringToHash).digest("hex");
+      const xVerify = sha256 + "###" + saltIndex;
 
-      const order = await storage.createOrder({
-        employeeId: employee.id,
-        productId: item.productId,
-        selectedColor: item.selectedColor,
-        quantity: item.quantity,
-        metadata: {
-          usedPoints,
-          unitPrice,
-          copayInr,
-          paymentId: result?.data?.transactionId,
-          phonepeOrderId: txnId,
-          deliveryMethod,
-          deliveryAddress,
+      const response = await fetch(`${apiUrl}${endpoint}`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "X-VERIFY": xVerify,
+          "X-MERCHANT-ID": merchantId,
         },
       });
 
-      orders.push({ order, product });
+      const result = await response.json();
+
+      if (!response.ok || !result?.success || result?.code !== "PAYMENT_SUCCESS") {
+        return res.status(400).json({ message: "Payment not completed", details: result });
+      }
+
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      if (!token) return res.status(401).json({ message: "No token" });
+
+      const session = await storage.getSession(token);
+      if (!session) return res.status(401).json({ message: "Invalid session" });
+
+      const employee = await storage.getEmployee(session.employeeId);
+      if (!employee) return res.status(404).json({ message: "Employee not found" });
+
+      const branding = await storage.getBranding();
+      const maxSelections = branding?.maxSelectionsPerUser ?? 1;
+
+      const employeeOrders = await storage.getOrdersByEmployeeId(session.employeeId);
+      const cartItems = await storage.getCartItems(session.employeeId);
+
+      if (cartItems.length === 0) return res.status(400).json({ message: "Cart is empty" });
+      if (maxSelections !== -1 && employeeOrders.length + cartItems.length > maxSelections) {
+        return res.status(400).json({ message: "Selection limit reached" });
+      }
+
+      const inrPerPoint = parseFloat(branding?.inrPerPoint ?? "1");
+      let totalPointsRequired = 0;
+
+      // ✅ slab-aware points calc
+      for (const item of cartItems) {
+        const product = await storage.getProduct(item.productId);
+        if (!product || (product.stock || 0) < item.quantity) {
+          return res
+            .status(400)
+            .json({ message: `Product ${product?.name || item.productId} unavailable` });
+        }
+
+        const unitPrice = getUnitPriceForQty(product, item.quantity);
+        totalPointsRequired += Math.ceil(unitPrice / inrPerPoint) * item.quantity;
+      }
+
+      const userPoints = employee.points ?? 0;
+      if (userPoints >= totalPointsRequired) {
+        return res.status(400).json({ message: "Sufficient points" });
+      }
+
+      const deficitPoints = totalPointsRequired - userPoints;
+      const copayInr = Math.ceil(deficitPoints * inrPerPoint);
+
+      const paidAmount = (result?.data?.amount ?? 0) / 100;
+      if (paidAmount !== copayInr) {
+        return res.status(400).json({ message: "Amount mismatch", expected: copayInr, paid: paidAmount });
+      }
+
+      const orders: any[] = [];
+      for (const item of cartItems) {
+        const product = await storage.getProduct(item.productId);
+        if (!product) continue;
+
+        await storage.updateProduct(item.productId, { stock: (product.stock || 0) - item.quantity });
+
+        const unitPrice = getUnitPriceForQty(product, item.quantity);
+        const usedPoints = Math.ceil(unitPrice / inrPerPoint) * item.quantity;
+
+        const order = await storage.createOrder({
+          employeeId: employee.id,
+          productId: item.productId,
+          selectedColor: item.selectedColor,
+          selectedSize: item.selectedSize,
+          quantity: item.quantity,
+          campaignId: item.campaignId || undefined,
+          metadata: {
+            usedPoints,
+            unitPrice,
+            copayInr,
+            paymentId: result?.data?.transactionId,
+            phonepeOrderId: txnId,
+            deliveryMethod,
+            deliveryAddress,
+          },
+        });
+
+        orders.push({ order, product });
+      }
+
+      await storage.updateEmployee(employee.id, { points: 0 });
+      await storage.clearCart(employee.id);
+
+      const updatedEmployee = await storage.getEmployee(employee.id);
+      res.json({ orders, employee: updatedEmployee });
+    } catch (error: any) {
+      console.error("verify-copay error:", error);
+      res.status(400).json({ message: "Invalid payment", details: error.message });
     }
-
-    await storage.updateEmployee(employee.id, { points: 0 });
-    await storage.clearCart(employee.id);
-
-    const updatedEmployee = await storage.getEmployee(employee.id);
-    res.json({ orders, employee: updatedEmployee });
-  } catch (error: any) {
-    console.error("verify-copay error:", error);
-    res.status(400).json({ message: "Invalid payment", details: error.message });
-  }
-});
+  });
 
 
 
@@ -1049,12 +1137,12 @@ app.post("/api/orders/verify-copay", async (req, res) => {
       const orders = await storage.getOrdersByEmployeeId(session.employeeId);
       const categories = await storage.getAllCategories();
       const categoryMap = buildCategoryMap(categories);
-      
+
       const detailedOrders = await Promise.all(
         orders.map(async (order) => {
           const product = await storage.getProduct(order.productId);
           const employee = await storage.getEmployee(order.employeeId);
-          
+
           return {
             order,
             product: product ? attachCategoriesToProduct(product, categoryMap) : null,
@@ -1076,13 +1164,13 @@ app.post("/api/orders/verify-copay", async (req, res) => {
       const ords = await storage.getAllOrders();
       const categories = await storage.getAllCategories();
       const domains = await storage.getAllDomainWhitelists();
-      
+
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const ordersToday = ords.filter((o) => o.orderDate && o.orderDate >= today);
       const lockedAccounts = emps.filter((e) => e.isLocked);
       const activeDomains = domains.filter((d) => d.isActive);
-      
+
       res.json({
         totalEmployees: emps.length,
         totalProducts: prods.length,
@@ -1113,15 +1201,15 @@ app.post("/api/orders/verify-copay", async (req, res) => {
       const body = insertEmployeeSchema.parse(req.body);
       const email = body.email.trim().toLowerCase();
       if (!isValidEmail(email)) return res.status(400).json({ message: "Invalid email" });
-      
+
       // Check if domain is whitelisted
       const domainCheck = await storage.checkDomainWhitelisted(email);
       if (!domainCheck.isWhitelisted && domainCheck.domain?.canLoginWithoutEmployeeId === false) {
-        return res.status(403).json({ 
-          message: "Email domain not authorized or requires whitelisting" 
+        return res.status(403).json({
+          message: "Email domain not authorized or requires whitelisting"
         });
       }
-      
+
       const exists = await storage.getEmployeeByEmail(email);
       if (exists) return res.status(409).json({ message: "Employee already exists (email)" });
       const employee = await storage.createEmployee({ ...body, email });
@@ -1131,152 +1219,152 @@ app.post("/api/orders/verify-copay", async (req, res) => {
     }
   });
 
-// ✅ UPDATED: POST /api/admin/employees/bulk
-app.post("/api/admin/employees/bulk", async (req, res) => {
-  try {
-    const rows = Array.isArray(req.body) ? req.body : [];
-    let inserted = 0;
-    let skipped = 0;
+  // ✅ UPDATED: POST /api/admin/employees/bulk
+  app.post("/api/admin/employees/bulk", async (req, res) => {
+    try {
+      const rows = Array.isArray(req.body) ? req.body : [];
+      let inserted = 0;
+      let skipped = 0;
 
-    const toBoolLoose = (v: any): boolean | undefined => {
-      if (v === undefined || v === null || v === "") return undefined;
-      if (typeof v === "boolean") return v;
-      if (typeof v === "number") return v === 1;
+      const toBoolLoose = (v: any): boolean | undefined => {
+        if (v === undefined || v === null || v === "") return undefined;
+        if (typeof v === "boolean") return v;
+        if (typeof v === "number") return v === 1;
 
-      const s = String(v).trim().toLowerCase();
-      if (["1", "true", "yes", "y"].includes(s)) return true;
-      if (["0", "false", "no", "n"].includes(s)) return false;
-      return undefined;
-    };
+        const s = String(v).trim().toLowerCase();
+        if (["1", "true", "yes", "y"].includes(s)) return true;
+        if (["0", "false", "no", "n"].includes(s)) return false;
+        return undefined;
+      };
 
-    for (const r of rows) {
-      try {
-        const rawEmail = r.email ? String(r.email).trim().toLowerCase() : "";
-        if (!rawEmail || !isValidEmail(rawEmail)) {
-          skipped++;
-          continue;
-        }
-
-        // Check domain whitelist
-        const domainCheck = await storage.checkDomainWhitelisted(rawEmail);
-        if (!domainCheck.isWhitelisted && domainCheck.domain?.canLoginWithoutEmployeeId === false) {
-          skipped++;
-          continue;
-        }
-
-        const exists = await storage.getEmployeeByEmail(rawEmail);
-
-        // ✅ optional column in sheet: bulkBuyAllowed (true/false/1/0/yes/no)
-        const bulkBuyAllowed = toBoolLoose((r as any).bulkBuyAllowed);
-
-        if (exists) {
-          const pts = Number((r as any).points);
-          const patch: any = {};
-
-          if (Number.isFinite(pts)) patch.points = pts;
-          if (bulkBuyAllowed !== undefined) patch.bulkBuyAllowed = bulkBuyAllowed;
-
-          // only write if something actually changed
-          if (Object.keys(patch).length) {
-            await storage.updateEmployee(exists.id, patch);
+      for (const r of rows) {
+        try {
+          const rawEmail = r.email ? String(r.email).trim().toLowerCase() : "";
+          if (!rawEmail || !isValidEmail(rawEmail)) {
+            skipped++;
+            continue;
           }
 
+          // Check domain whitelist
+          const domainCheck = await storage.checkDomainWhitelisted(rawEmail);
+          if (!domainCheck.isWhitelisted && domainCheck.domain?.canLoginWithoutEmployeeId === false) {
+            skipped++;
+            continue;
+          }
+
+          const exists = await storage.getEmployeeByEmail(rawEmail);
+
+          // ✅ optional column in sheet: bulkBuyAllowed (true/false/1/0/yes/no)
+          const bulkBuyAllowed = toBoolLoose((r as any).bulkBuyAllowed);
+
+          if (exists) {
+            const pts = Number((r as any).points);
+            const patch: any = {};
+
+            if (Number.isFinite(pts)) patch.points = pts;
+            if (bulkBuyAllowed !== undefined) patch.bulkBuyAllowed = bulkBuyAllowed;
+
+            // only write if something actually changed
+            if (Object.keys(patch).length) {
+              await storage.updateEmployee(exists.id, patch);
+            }
+
+            skipped++;
+            continue;
+          }
+
+          const firstName = String((r as any).firstName || "").trim();
+          const lastName = String((r as any).lastName || "").trim();
+          const points = Number.isFinite(Number((r as any).points)) ? Number((r as any).points) : 0;
+
+          if (!firstName || !lastName) {
+            skipped++;
+            continue;
+          }
+
+          await storage.createEmployee({
+            firstName,
+            lastName,
+            email: rawEmail,
+            points,
+            // ✅ default false if not provided
+            bulkBuyAllowed: bulkBuyAllowed ?? false,
+          } as any);
+
+          inserted++;
+        } catch {
           skipped++;
-          continue;
+        }
+      }
+
+      res.json({ inserted, skipped });
+    } catch {
+      res.status(400).json({ message: "Invalid bulk payload" });
+    }
+  });
+
+
+  app.put("/api/admin/employees/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Only allow specific editable fields
+      const updates: any = {};
+      const body = req.body || {};
+
+      if (body.firstName !== undefined) updates.firstName = String(body.firstName).trim();
+      if (body.lastName !== undefined) updates.lastName = String(body.lastName).trim();
+
+      // email update + validation + domain whitelist checks
+      if (body.email !== undefined) {
+        const email = String(body.email || "").trim().toLowerCase();
+        if (!isValidEmail(email)) return res.status(400).json({ message: "Invalid email" });
+
+        const domainCheck = await storage.checkDomainWhitelisted(email);
+        if (!domainCheck.isWhitelisted && domainCheck.domain?.canLoginWithoutEmployeeId === false) {
+          return res.status(403).json({ message: "Email domain not authorized" });
         }
 
-        const firstName = String((r as any).firstName || "").trim();
-        const lastName = String((r as any).lastName || "").trim();
-        const points = Number.isFinite(Number((r as any).points)) ? Number((r as any).points) : 0;
+        updates.email = email;
+      }
 
-        if (!firstName || !lastName) {
-          skipped++;
-          continue;
+      // points update
+      if (body.points !== undefined) {
+        const pts = Number(body.points);
+        if (!Number.isFinite(pts) || pts < 0) {
+          return res.status(400).json({ message: "Invalid points" });
         }
-
-        await storage.createEmployee({
-          firstName,
-          lastName,
-          email: rawEmail,
-          points,
-          // ✅ default false if not provided
-          bulkBuyAllowed: bulkBuyAllowed ?? false,
-        } as any);
-
-        inserted++;
-      } catch {
-        skipped++;
-      }
-    }
-
-    res.json({ inserted, skipped });
-  } catch {
-    res.status(400).json({ message: "Invalid bulk payload" });
-  }
-});
-
-
-app.put("/api/admin/employees/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    // Only allow specific editable fields
-    const updates: any = {};
-    const body = req.body || {};
-
-    if (body.firstName !== undefined) updates.firstName = String(body.firstName).trim();
-    if (body.lastName !== undefined) updates.lastName = String(body.lastName).trim();
-
-    // email update + validation + domain whitelist checks
-    if (body.email !== undefined) {
-      const email = String(body.email || "").trim().toLowerCase();
-      if (!isValidEmail(email)) return res.status(400).json({ message: "Invalid email" });
-
-      const domainCheck = await storage.checkDomainWhitelisted(email);
-      if (!domainCheck.isWhitelisted && domainCheck.domain?.canLoginWithoutEmployeeId === false) {
-        return res.status(403).json({ message: "Email domain not authorized" });
+        updates.points = Math.floor(pts);
       }
 
-      updates.email = email;
-    }
-
-    // points update
-    if (body.points !== undefined) {
-      const pts = Number(body.points);
-      if (!Number.isFinite(pts) || pts < 0) {
-        return res.status(400).json({ message: "Invalid points" });
+      // bulkBuyAllowed update
+      if (body.bulkBuyAllowed !== undefined) {
+        updates.bulkBuyAllowed = Boolean(body.bulkBuyAllowed);
       }
-      updates.points = Math.floor(pts);
-    }
 
-    // bulkBuyAllowed update
-    if (body.bulkBuyAllowed !== undefined) {
-      updates.bulkBuyAllowed = Boolean(body.bulkBuyAllowed);
-    }
-
-    // ✅ role update
-    if (body.role !== undefined) {
-      const role = String(body.role || "").trim().toLowerCase();
-      const allowed = ["user", "admin", "procurement"];
-      if (!allowed.includes(role)) {
-        return res.status(400).json({ message: "Invalid role. Allowed: user, admin, procurement" });
+      // ✅ role update
+      if (body.role !== undefined) {
+        const role = String(body.role || "").trim().toLowerCase();
+        const allowed = ["user", "admin", "procurement"];
+        if (!allowed.includes(role)) {
+          return res.status(400).json({ message: "Invalid role. Allowed: user, admin, procurement" });
+        }
+        updates.role = role;
       }
-      updates.role = role;
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ message: "No valid fields to update" });
+      }
+
+      const updated = await storage.updateEmployee(id, updates);
+      if (!updated) return res.status(404).json({ message: "Employee not found" });
+
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Employee update error:", error);
+      res.status(500).json({ message: "Error updating employee", details: error.message });
     }
-
-    if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ message: "No valid fields to update" });
-    }
-
-    const updated = await storage.updateEmployee(id, updates);
-    if (!updated) return res.status(404).json({ message: "Employee not found" });
-
-    res.json(updated);
-  } catch (error: any) {
-    console.error("Employee update error:", error);
-    res.status(500).json({ message: "Error updating employee", details: error.message });
-  }
-});
+  });
 
 
   app.post("/api/admin/employees/:id/unlock", async (req, res) => {
@@ -1297,12 +1385,12 @@ app.put("/api/admin/employees/:id", async (req, res) => {
       const ords = await storage.getAllOrders();
       const categories = await storage.getAllCategories();
       const categoryMap = buildCategoryMap(categories);
-      
+
       const withDetails = await Promise.all(
         ords.map(async (o) => {
           const product = await storage.getProduct(o.productId);
           const employee = await storage.getEmployee(o.employeeId);
-          
+
           return {
             ...o,
             product: product ? attachCategoriesToProduct(product, categoryMap) : null,
@@ -1319,16 +1407,16 @@ app.put("/api/admin/employees/:id", async (req, res) => {
   app.post("/api/admin/products", async (req, res) => {
     try {
       const raw = { ...req.body };
-  
+
       // ✅ normalize slabs before schema validation
       try {
         raw.priceSlabs = normalizePriceSlabs(raw.priceSlabs);
       } catch (e: any) {
         return res.status(400).json({ message: e.message || "Invalid price slabs" });
       }
-  
+
       const productData = insertProductSchema.parse(raw);
-  
+
       const product = await storage.createProduct(productData);
       res.json(product);
     } catch (error: any) {
@@ -1336,11 +1424,11 @@ app.put("/api/admin/employees/:id", async (req, res) => {
       res.status(400).json({ message: "Invalid product data", details: error.message });
     }
   });
-  
+
   app.put("/api/admin/products/:id", async (req, res) => {
     try {
       const updates = { ...req.body };
-  
+
       // ✅ normalize slabs on update too
       if ("priceSlabs" in updates) {
         try {
@@ -1349,20 +1437,20 @@ app.put("/api/admin/employees/:id", async (req, res) => {
           return res.status(400).json({ message: e.message || "Invalid price slabs" });
         }
       }
-  
+
       // ✅ recommended: validate partial payload (prevents bad writes)
       // const validated = insertProductSchema.partial().parse(updates);
-  
+
       const product = await storage.updateProduct(req.params.id, updates);
       if (!product) return res.status(404).json({ message: "Product not found" });
-  
+
       res.json(product);
     } catch (error: any) {
       console.error("Update product error:", error);
       res.status(500).json({ message: "Error updating product", details: error.message });
     }
   });
-  
+
 
 
 
@@ -1396,15 +1484,55 @@ app.put("/api/admin/employees/:id", async (req, res) => {
   });
 
   // Campaigns
-  app.get("/api/campaigns", async (_req, res) => {
+  app.get("/api/campaigns", async (req, res) => {
     try {
-      const campaigns = await storage.getAllCampaigns();
-      res.json(campaigns);
-    } catch {
+      const allCampaigns = await storage.getAllCampaigns();
+      const activeCampaigns = allCampaigns.filter(c => c.isActive);
+
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      if (!token) return res.json([]); // No token, no access (or public?)
+
+      const session = await storage.getSession(token);
+      if (!session) return res.json([]);
+
+      const employee = await storage.getEmployee(session.employeeId);
+      if (!employee) return res.json([]);
+
+      const allowedCampaigns = [];
+      const employeeOrders = await storage.getOrdersByEmployeeId(employee.id);
+      const cartItems = await storage.getCartItems(employee.id);
+
+      for (const campaign of activeCampaigns) {
+        // 1. Whitelist Access Check
+        const access = await storage.checkCampaignAccess(campaign.id, employee.email);
+        if (!access.allowed) continue;
+
+        // 2. Limit Check (Orders + Cart)
+        if (campaign.maxProductsPerUser !== null) {
+          let usage = 0;
+          employeeOrders.forEach(o => {
+            if (o.campaignId === campaign.id) usage += (o.quantity || 1);
+          });
+          cartItems.forEach(c => {
+            if (c.campaignId === campaign.id) usage += (c.quantity || 1);
+          });
+
+          if (usage >= campaign.maxProductsPerUser) {
+            // Limit reached (or exceeded), hide campaign
+            continue;
+          }
+        }
+
+        allowedCampaigns.push(campaign);
+      }
+
+      res.json(allowedCampaigns);
+    } catch (error: any) {
+      console.error("Error fetching campaigns:", error);
       res.status(500).json({ message: "Error fetching campaigns" });
     }
   });
-  
+
   app.get("/api/campaigns/:id", async (req, res) => {
     try {
       const { id } = req.params;
@@ -1415,28 +1543,28 @@ app.put("/api/admin/employees/:id", async (req, res) => {
       res.status(500).json({ message: "Error fetching campaign" });
     }
   });
-  
+
   app.get("/api/campaigns/:id/products", async (req, res) => {
     try {
       const { id } = req.params;
       const campaignProducts = await storage.getCampaignProducts(id);
-      
+
       const categories = await storage.getAllCategories();
       const categoryMap = buildCategoryMap(categories);
-      
+
       const enrichedProducts = campaignProducts.map(cp => ({
         ...cp.product,
         categories: cp.product.categoryIds
           ?.map((catId: string) => categoryMap.get(catId))
           .filter((cat): cat is Category => Boolean(cat)) ?? [],
       }));
-      
+
       res.json(enrichedProducts);
     } catch {
       res.status(500).json({ message: "Error fetching campaign products" });
     }
   });
-  
+
   app.post("/api/admin/campaigns", async (req, res) => {
     try {
       const campaignData = insertCampaignSchema.parse(req.body);
@@ -1447,12 +1575,12 @@ app.put("/api/admin/employees/:id", async (req, res) => {
       res.status(400).json({ message: "Invalid campaign data", details: error.message });
     }
   });
-  
+
   app.put("/api/admin/campaigns/:id", async (req, res) => {
     try {
       const { id } = req.params;
       const updates = insertCampaignSchema.partial().parse(req.body);
-      
+
       const campaign = await storage.updateCampaign(id, updates);
       if (!campaign) return res.status(404).json({ message: "Campaign not found" });
       res.json(campaign);
@@ -1461,7 +1589,7 @@ app.put("/api/admin/employees/:id", async (req, res) => {
       res.status(500).json({ message: "Error updating campaign", details: error.message });
     }
   });
-  
+
   app.delete("/api/admin/campaigns/:id", async (req, res) => {
     try {
       const { id } = req.params;
@@ -1473,22 +1601,22 @@ app.put("/api/admin/employees/:id", async (req, res) => {
       res.status(500).json({ message: "Error deleting campaign", details: error.message });
     }
   });
-  
+
   app.post("/api/admin/campaigns/:campaignId/products", async (req, res) => {
     try {
       const { campaignId } = req.params;
       const { productId } = req.body;
-      
+
       if (!productId) {
         return res.status(400).json({ message: "Product ID is required" });
       }
-      
+
       const campaign = await storage.getCampaign(campaignId);
       if (!campaign) return res.status(404).json({ message: "Campaign not found" });
-      
+
       const product = await storage.getProduct(productId);
       if (!product) return res.status(404).json({ message: "Product not found" });
-      
+
       const campaignProduct = await storage.addProductToCampaign(campaignId, productId);
       res.json(campaignProduct);
     } catch (error: any) {
@@ -1496,28 +1624,28 @@ app.put("/api/admin/employees/:id", async (req, res) => {
       res.status(400).json({ message: "Error adding product to campaign", details: error.message });
     }
   });
-  
+
   app.delete("/api/admin/campaigns/:campaignId/products/:productId", async (req, res) => {
     try {
       const { campaignId, productId } = req.params;
-      
+
       const campaignProducts = await storage.getCampaignProducts(campaignId);
       const campaignProduct = campaignProducts.find(cp => cp.product.id === productId);
-      
+
       if (!campaignProduct) {
         return res.status(404).json({ message: "Product not found in campaign" });
       }
-      
+
       const ok = await storage.removeProductFromCampaign(campaignProduct.campaignProduct.id);
       if (!ok) return res.status(500).json({ message: "Error removing product from campaign" });
-      
+
       res.json({ ok: true });
     } catch (error: any) {
       console.error("Remove product from campaign error:", error);
       res.status(500).json({ message: "Error removing product from campaign", details: error.message });
     }
   });
-  
+
   app.get("/api/admin/products/:productId/campaigns", async (req, res) => {
     try {
       const { productId } = req.params;
@@ -1533,12 +1661,12 @@ app.put("/api/admin/employees/:id", async (req, res) => {
     try {
       const allProducts = await storage.getAllProducts();
       const result: Record<string, Campaign[]> = {};
-      
+
       for (const product of allProducts) {
         const campaigns = await storage.getProductCampaigns(product.id);
         result[product.id] = campaigns;
       }
-      
+
       res.json(result);
     } catch (error: any) {
       console.error("Get product campaigns error:", error);
@@ -1562,11 +1690,11 @@ app.put("/api/admin/employees/:id", async (req, res) => {
       const { slug } = req.params;
       const blog = await storage.getBlogBySlug(slug);
       if (!blog) return res.status(404).json({ message: "Blog not found" });
-      
+
       if (blog.isPublished) {
         await storage.incrementBlogViews(blog.id);
       }
-      
+
       res.json(blog);
     } catch (error: any) {
       console.error("Blog fetch error:", error);
@@ -1600,12 +1728,12 @@ app.put("/api/admin/employees/:id", async (req, res) => {
   app.post("/api/admin/blogs", async (req, res) => {
     try {
       const blogData = insertBlogSchema.parse(req.body);
-      
+
       const dataForDb = {
         ...blogData,
         publishedAt: blogData.isPublished ? new Date() : null,
       };
-      
+
       const blog = await storage.createBlog(dataForDb);
       res.json(blog);
     } catch (error: any) {
@@ -1618,12 +1746,12 @@ app.put("/api/admin/employees/:id", async (req, res) => {
     try {
       const { id } = req.params;
       const updates = insertBlogSchema.partial().parse(req.body);
-      
+
       const updatesForDb: any = { ...updates };
       if (updates.isPublished !== undefined) {
         updatesForDb.publishedAt = updates.isPublished ? new Date() : null;
       }
-      
+
       const blog = await storage.updateBlog(id, updatesForDb);
       if (!blog) return res.status(404).json({ message: "Blog not found" });
       res.json(blog);
@@ -1650,13 +1778,13 @@ app.put("/api/admin/employees/:id", async (req, res) => {
     try {
       // Get all campaigns
       const campaigns = await storage.getAllCampaigns();
-      
+
       // Get products for all campaigns
       const allCampaignProducts: any[] = [];
-      
+
       for (const campaign of campaigns) {
         const campaignProducts = await storage.getCampaignProducts(campaign.id);
-        
+
         campaignProducts.forEach(cp => {
           // Add campaign product relationship info
           allCampaignProducts.push({
@@ -1670,7 +1798,7 @@ app.put("/api/admin/employees/:id", async (req, res) => {
           });
         });
       }
-      
+
       // Remove duplicates (same product might be in multiple campaigns)
       const uniqueProducts = new Map();
       allCampaignProducts.forEach(cp => {
@@ -1678,7 +1806,7 @@ app.put("/api/admin/employees/:id", async (req, res) => {
           uniqueProducts.set(cp.product.id, cp);
         }
       });
-      
+
       res.json(Array.from(uniqueProducts.values()));
     } catch (error: any) {
       console.error("Error fetching all campaign products:", error);
@@ -1687,29 +1815,29 @@ app.put("/api/admin/employees/:id", async (req, res) => {
   });
 
   app.get("/api/bulkbuy/me", async (req, res) => {
-  try {
-    const token = req.headers.authorization?.replace("Bearer ", "");
-    if (!token) return res.status(401).json({ message: "No token" });
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      if (!token) return res.status(401).json({ message: "No token" });
 
-    const session = await storage.getSession(token);
-    if (!session) return res.status(401).json({ message: "Invalid session" });
+      const session = await storage.getSession(token);
+      if (!session) return res.status(401).json({ message: "Invalid session" });
 
-    const employee = await storage.getEmployee(session.employeeId);
-    if (!employee) return res.status(404).json({ message: "Employee not found" });
+      const employee = await storage.getEmployee(session.employeeId);
+      if (!employee) return res.status(404).json({ message: "Employee not found" });
 
-    const access = await storage.getBulkBuyAccessByEmail(employee.email);
+      const access = await storage.getBulkBuyAccessByEmail(employee.email);
 
-    const eligible = employee.bulkBuyAllowed === true || !!access?.isActive;
+      const eligible = employee.bulkBuyAllowed === true || !!access?.isActive;
 
-    res.json({
-      eligible,
-      access: access ?? null,
-      employeeFlag: employee.bulkBuyAllowed === true,
-    });
-  } catch (e: any) {
-    res.status(500).json({ message: "Failed", details: e.message });
-  }
-});
+      res.json({
+        eligible,
+        access: access ?? null,
+        employeeFlag: employee.bulkBuyAllowed === true,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: "Failed", details: e.message });
+    }
+  });
 
 
   /**
@@ -1742,25 +1870,34 @@ app.put("/api/admin/employees/:id", async (req, res) => {
     const guard = await requireBulkBuyAccess(req, res);
     if (!guard.ok) return;
 
-    const { productId, selectedColor = null, quantity = 1 } = req.body || {};
+    const { productId, quantity = 1, selectedColor = null, selectedSize = null } = req.body || {};
     if (!productId) return res.status(400).json({ message: "ProductId required" });
-    if (!Number.isInteger(quantity) || quantity < 1) return res.status(400).json({ message: "Invalid quantity" });
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      return res.status(400).json({ message: "Invalid quantity" });
+    }
 
     const p = await storage.getProduct(productId);
     if (!p || p.isActive === false || p.bulkBuy !== true) {
       return res.status(404).json({ message: "Bulk buy product not found" });
     }
 
-    if (p.colors?.length > 0 && !selectedColor) {
+    if ((p.colors?.length || 0) > 0 && !selectedColor) {
       return res.status(400).json({ message: "Please select a color" });
+    }
+
+    if ((p as any).sizes?.values?.length > 0 && !selectedSize) {
+      return res.status(400).json({ message: "Please select a size" });
     }
 
     if ((p.stock || 0) < quantity) return res.status(400).json({ message: "Insufficient stock" });
 
-    // merge by product+color
+    // merge by product+color+size
     const current = await storage.getBulkBuyCartItems(guard.employee.id);
     const existing = current.find(
-      (it: any) => it.productId === productId && (it.selectedColor ?? null) === (selectedColor ?? null)
+      (it: any) =>
+        it.productId === productId &&
+        (it.selectedColor ?? null) === (selectedColor ?? null) &&
+        (it.selectedSize ?? null) === (selectedSize ?? null)
     );
 
     if (existing) {
@@ -1771,7 +1908,7 @@ app.put("/api/admin/employees/:id", async (req, res) => {
       return res.json(updated);
     }
 
-    const created = await storage.addBulkBuyCartItem(guard.employee.id, productId, selectedColor, quantity);
+    const created = await storage.addBulkBuyCartItem(guard.employee.id, productId, selectedColor, selectedSize, quantity);
     res.json(created);
   });
 
@@ -1904,85 +2041,91 @@ app.put("/api/admin/employees/:id", async (req, res) => {
  * Body: { productId, quantity, selectedColor, deliveryMethod, deliveryAddress, requesterNote }
  * ===========================
  */
-app.post("/api/bulkbuy/request", async (req, res) => {
-  const guard = await requireBulkBuyAccess(req, res);
-  if (!guard.ok) return;
+  app.post("/api/bulkbuy/request", async (req, res) => {
+    const guard = await requireBulkBuyAccess(req, res);
+    if (!guard.ok) return;
 
-  try {
-    const {
-      productId,
-      quantity = 1,
-      selectedColor = null,
-      deliveryMethod = "office",
-      deliveryAddress = null,
-      requesterNote = null,
-    } = req.body || {};
+    try {
+      const {
+        productId,
+        quantity = 1,
+        selectedColor = null,
+        selectedSize = null,
+        deliveryMethod = "office",
+        deliveryAddress = null,
+        requesterNote = null,
+      } = req.body || {};
 
-    if (!productId) return res.status(400).json({ message: "ProductId required" });
-    if (!Number.isInteger(quantity) || quantity < 1) {
-      return res.status(400).json({ message: "Invalid quantity" });
-    }
+      if (!productId) return res.status(400).json({ message: "ProductId required" });
+      if (!Number.isInteger(quantity) || quantity < 1) {
+        return res.status(400).json({ message: "Invalid quantity" });
+      }
 
-    if (!["office", "delivery"].includes(deliveryMethod)) {
-      return res.status(400).json({ message: "Invalid delivery method" });
-    }
+      if (!["office", "delivery"].includes(deliveryMethod)) {
+        return res.status(400).json({ message: "Invalid delivery method" });
+      }
 
-    if (deliveryMethod === "delivery" && !String(deliveryAddress || "").trim()) {
-      return res.status(400).json({ message: "Delivery address required" });
-    }
+      if (deliveryMethod === "delivery" && !String(deliveryAddress || "").trim()) {
+        return res.status(400).json({ message: "Delivery address required" });
+      }
 
-    const p = await storage.getProduct(productId);
-    if (!p || p.isActive === false || p.bulkBuy !== true) {
-      return res.status(404).json({ message: "Bulk buy product not found" });
-    }
+      const p = await storage.getProduct(productId);
+      if (!p || p.isActive === false || p.bulkBuy !== true) {
+        return res.status(404).json({ message: "Bulk buy product not found" });
+      }
 
-    if (p.colors?.length > 0 && !selectedColor) {
-      return res.status(400).json({ message: "Please select a color" });
-    }
+      if (p.colors?.length > 0 && !selectedColor) {
+        return res.status(400).json({ message: "Please select a color" });
+      }
 
-    if ((p.stock || 0) < quantity) {
-      return res.status(400).json({ message: "Insufficient stock" });
-    }
+      const sizes = (p as any).sizes;
+      if (sizes?.values?.length > 0 && !selectedSize) {
+        return res.status(400).json({ message: "Please select a size" });
+      }
 
-    const unitPrice = getUnitPriceForQty(p, quantity);
-    const lineTotal = Number((unitPrice * quantity).toFixed(2));
+      if ((p.stock || 0) < quantity) {
+        return res.status(400).json({ message: "Insufficient stock" });
+      }
 
-    const itemsSnap = [
-      {
-        productId: p.id,
-        name: p.name,
-        sku: p.sku,
-        selectedColor: selectedColor ?? null,
-        quantity,
-        unitPrice,
-        lineTotal,
-      },
-    ];
+      const unitPrice = getUnitPriceForQty(p, quantity);
+      const lineTotal = Number((unitPrice * quantity).toFixed(2));
 
-    const requestRec = await storage.createBulkBuyRequest({
-      employeeId: guard.employee.id,
-      deliveryMethod,
-      deliveryAddress: deliveryMethod === "delivery" ? deliveryAddress : null,
-      requesterNote,
-      items: itemsSnap,
-      totalAmount: lineTotal,
-    });
+      const itemsSnap = [
+        {
+          productId: p.id,
+          name: p.name,
+          sku: p.sku || "",
+          selectedColor,
+          selectedSize,
+          quantity,
+          unitPrice,
+          lineTotal,
+        },
+      ];
 
-    // OPTIONAL: notify via email (same as checkout)
-    const procurementEmails = await storage.getProcurementRecipients();
-    const supportEmail = "support@acegiftingsolutions.com";
+      const requestRec = await storage.createBulkBuyRequest({
+        employeeId: guard.employee.id,
+        deliveryMethod,
+        deliveryAddress: deliveryMethod === "delivery" ? deliveryAddress : null,
+        requesterNote,
+        items: itemsSnap,
+        totalAmount: lineTotal,
+      });
 
-    const subject = `Bulk Buy Request Submitted: ${requestRec.requestId}`;
-    const table = buildItemsTableHtml(itemsSnap);
+      // OPTIONAL: notify via email (same as checkout)
+      const procurementEmails = await storage.getProcurementRecipients();
+      const supportEmail = "support@acegiftingsolutions.com";
 
-    const html = `
+      const subject = `Bulk Buy Request Submitted: ${requestRec.requestId}`;
+      const table = buildItemsTableHtml(itemsSnap);
+
+      const html = `
       <div style="font-family:Arial,sans-serif;color:#111;">
         <h2>Bulk Buy Request Submitted</h2>
         <p><b>Request ID:</b> ${requestRec.requestId}</p>
         <p><b>Requester:</b> ${guard.employee.firstName} ${guard.employee.lastName} (${guard.employee.email})</p>
         <p><b>Status:</b> ${requestRec.status}</p>
-        <p><b>Delivery:</b> ${deliveryMethod}${
-          deliveryMethod === "delivery" && deliveryAddress ? ` - ${deliveryAddress}` : ""
+        <p><b>Delivery:</b> ${deliveryMethod}${deliveryMethod === "delivery" && deliveryAddress ? ` - ${deliveryAddress}` : ""
         }</p>
         ${requesterNote ? `<p><b>Note:</b> ${requesterNote}</p>` : ""}
         <h3>Items</h3>
@@ -1992,32 +2135,32 @@ app.post("/api/bulkbuy/request", async (req, res) => {
       </div>
     `;
 
-    await emailService.sendMail({
-      to: guard.employee.email,
-      subject,
-      html,
-      text: `Bulk Buy Request ${requestRec.requestId} submitted. Total ₹${Number(lineTotal).toFixed(2)}.`,
-      fromName: "Bulk Buy",
-    });
+      await emailService.sendMail({
+        to: guard.employee.email,
+        subject,
+        html,
+        text: `Bulk Buy Request ${requestRec.requestId} submitted. Total ₹${Number(lineTotal).toFixed(2)}.`,
+        fromName: "Bulk Buy",
+      });
 
-    await emailService.sendMail({
-      to: procurementEmails.length ? procurementEmails : supportEmail,
-      cc: supportEmail,
-      subject,
-      html,
-      text: `Bulk Buy Request ${requestRec.requestId} submitted by ${guard.employee.email}.`,
-      fromName: "Bulk Buy",
-    });
+      await emailService.sendMail({
+        to: procurementEmails.length ? procurementEmails : supportEmail,
+        cc: supportEmail,
+        subject,
+        html,
+        text: `Bulk Buy Request ${requestRec.requestId} submitted by ${guard.employee.email}.`,
+        fromName: "Bulk Buy",
+      });
 
-    return res.json({
-      request: requestRec,
-      message: "Your request has been submitted to procurement team for approval..",
-    });
-  } catch (e: any) {
-    console.error("bulkbuy/request error:", e);
-    return res.status(500).json({ message: "Failed to submit request", details: e.message });
-  }
-});
+      return res.json({
+        request: requestRec,
+        message: "Your request has been submitted to procurement team for approval..",
+      });
+    } catch (e: any) {
+      console.error("bulkbuy/request error:", e);
+      return res.status(500).json({ message: "Failed to submit request", details: e.message });
+    }
+  });
 
   /**
    * ===========================

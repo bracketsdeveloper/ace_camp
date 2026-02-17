@@ -140,18 +140,8 @@ export async function sendOTP(req: Request, res: Response) {
 
     // Auto-create user only for whitelisted domains with autoCreateUser enabled
     if (!user && policy.canAutoCreate) {
-      const emailName = email.split("@")[0];
-      const firstName = emailName.split(".")[0] || "User";
-      const lastName = emailName.split(".")[1] || "";
-
-      user = await storage.createEmployee({
-        firstName: firstName.charAt(0).toUpperCase() + firstName.slice(1),
-        lastName: lastName ? lastName.charAt(0).toUpperCase() + lastName.slice(1) : "",
-        email,
-        points: policy.domainConfig?.defaultPoints || 0,
-      } as any);
-
       isNewUser = true;
+      // Do NOT create user here. Wait for verify.
     }
 
     // If still no user -> employee doesn't exist and autoCreate isn't allowed
@@ -233,14 +223,20 @@ export async function verifyOTP(req: Request, res: Response) {
     // Auto-create only for whitelisted + autoCreateUser
     if (!user && policy.canAutoCreate) {
       const emailName = email.split("@")[0];
+      // Use provided name OR fallback
       const defaultFirstName = firstName || emailName.split(".")[0] || "User";
+      // Ensure proper casing if falling back, but respect input casing
+      const finalFirstName = firstName ? firstName : (defaultFirstName.charAt(0).toUpperCase() + defaultFirstName.slice(1));
+
       const defaultLastName = lastName || emailName.split(".")[1] || "";
+      const finalLastName = lastName ? lastName : (defaultLastName ? defaultLastName.charAt(0).toUpperCase() + defaultLastName.slice(1) : "");
 
       user = await storage.createEmployee({
-        firstName: defaultFirstName.charAt(0).toUpperCase() + defaultFirstName.slice(1),
-        lastName: defaultLastName ? defaultLastName.charAt(0).toUpperCase() + defaultLastName.slice(1) : "",
+        firstName: finalFirstName,
+        lastName: finalLastName,
         email,
         points: policy.domainConfig?.defaultPoints || 0,
+        bulkBuyAllowed: false,
       } as any);
     }
 

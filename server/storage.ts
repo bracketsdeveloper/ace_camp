@@ -43,6 +43,9 @@ import {
   type BulkBuyAccess,
   type InsertBulkBuyAccess,
   type BulkBuyRequest,
+  campaignWhitelist,
+  type CampaignWhitelist,
+  type InsertCampaignWhitelist,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -76,6 +79,12 @@ export interface IStorage {
   addProductToCampaign(campaignId: string, productId: string): Promise<CampaignProduct>;
   removeProductFromCampaign(campaignProductId: string): Promise<boolean>;
   getProductCampaigns(productId: string): Promise<Campaign[]>;
+
+  // Campaign Whitelist
+  getCampaignWhitelist(campaignId: string): Promise<CampaignWhitelist[]>;
+  addCampaignWhitelist(data: InsertCampaignWhitelist): Promise<CampaignWhitelist>;
+  removeCampaignWhitelist(id: string): Promise<boolean>;
+  checkCampaignAccess(campaignId: string, email: string): Promise<{ allowed: boolean; reason?: string }>;
 
   // Employees
   getEmployee(id: string): Promise<Employee | undefined>;
@@ -140,8 +149,8 @@ export interface IStorage {
   getBulkBuyProducts(): Promise<Product[]>;
 
   // ✅ BULK BUY CART
-  getBulkBuyCartItems(employeeId: string): Promise<{ id: string; employeeId: string; productId: string; selectedColor: string | null; quantity: number; createdAt: Date | null }[]>;
-  addBulkBuyCartItem(employeeId: string, productId: string, selectedColor: string | null, quantity: number): Promise<any>;
+  getBulkBuyCartItems(employeeId: string): Promise<{ id: string; employeeId: string; productId: string; selectedColor: string | null; selectedSize: string | null; quantity: number; createdAt: Date | null }[]>;
+  addBulkBuyCartItem(employeeId: string, productId: string, selectedColor: string | null, selectedSize: string | null, quantity: number): Promise<any>;
   updateBulkBuyCartItem(id: string, updates: { quantity?: number }): Promise<any | undefined>;
   removeBulkBuyCartItem(id: string): Promise<boolean>;
   clearBulkBuyCart(employeeId: string): Promise<void>;
@@ -157,6 +166,7 @@ export interface IStorage {
       name: string;
       sku?: string;
       selectedColor?: string | null;
+      selectedSize?: string | null;
       quantity: number;
       unitPrice: number;
       lineTotal: number;
@@ -372,6 +382,77 @@ class DrizzleStorage implements IStorage {
       .innerJoin(campaigns, eq(campaignProducts.campaignId, campaigns.id));
 
     return rows.map((row) => row.campaign);
+  }
+
+  // Campaign Whitelist
+  async getCampaignWhitelist(campaignId: string) {
+    return db
+      .select()
+      .from(campaignWhitelist)
+      .where(eq(campaignWhitelist.campaignId, campaignId))
+      .orderBy(desc(campaignWhitelist.createdAt));
+  }
+
+  async addCampaignWhitelist(data: InsertCampaignWhitelist) {
+    if (!data.campaignId) {
+      throw new Error("Campaign ID is required");
+    }
+    const rows = await db
+      .insert(campaignWhitelist)
+      .values({
+        email: data.email,
+        campaignId: data.campaignId,
+        startDate: data.startDate,
+        endDate: data.endDate,
+      })
+      .returning();
+    return rows[0];
+  }
+
+  async removeCampaignWhitelist(id: string) {
+    const res = await db.delete(campaignWhitelist).where(eq(campaignWhitelist.id, id));
+    return res.rowCount ? res.rowCount > 0 : true;
+  }
+
+  async checkCampaignAccess(campaignId: string, email: string) {
+    const now = new Date();
+
+    // First check if whitelist exists for this campaign
+    const whitelistEntries = await db
+      .select()
+      .from(campaignWhitelist)
+      .where(eq(campaignWhitelist.campaignId, campaignId));
+
+    // If no whitelist entries exist, assume open to all (or restrict? User request implies specific whitelist feature)
+    // "whitelist each user for specific period".
+    // If table is empty, maybe it's open? Or maybe it's closed?
+    // Usually, if a whitelist feature is used, it restricts access.
+    // However, for backward compatibility, if no one is whitelisted, is it open?
+    // Let's assume: if there are ANY entries in whitelist for this campaign, then ONLY those users can access.
+    // If there are NO entries, then everyone can access (unless we want to force whitelist).
+
+    // Actually, simple logic: check if user is in whitelist.
+    // If not in whitelist => denied (if whitelist mode is active).
+    // But we don't have a "whitelist mode" flag.
+    // Let's implement: Check if record exists for this email.
+
+    const userEntry = whitelistEntries.find(w => w.email.toLowerCase() === email.toLowerCase());
+
+    if (whitelistEntries.length > 0 && !userEntry) {
+      return { allowed: false, reason: "Not whitelisted" };
+    }
+
+    if (userEntry) {
+      // Check dates
+      if (userEntry.startDate && now < userEntry.startDate) {
+        return { allowed: false, reason: "Access not yet started" };
+      }
+      if (userEntry.endDate && now > userEntry.endDate) {
+        return { allowed: false, reason: "Access expired" };
+      }
+    }
+
+    return { allowed: true };
   }
 
   // Products
@@ -635,13 +716,14 @@ class DrizzleStorage implements IStorage {
     return db.select().from(bulkBuyCartItems).where(eq(bulkBuyCartItems.employeeId, employeeId));
   }
 
-  async addBulkBuyCartItem(employeeId: string, productId: string, selectedColor: string | null, quantity: number) {
+  async addBulkBuyCartItem(employeeId: string, productId: string, selectedColor: string | null, selectedSize: string | null, quantity: number) {
     const rows = await db
       .insert(bulkBuyCartItems)
       .values({
         employeeId,
         productId,
-        selectedColor: selectedColor ?? null,
+        selectedColor,
+        selectedSize,
         quantity,
       })
       .returning();
@@ -675,6 +757,7 @@ class DrizzleStorage implements IStorage {
       name: string;
       sku?: string;
       selectedColor?: string | null;
+      selectedSize?: string | null;
       quantity: number;
       unitPrice: number;
       lineTotal: number;

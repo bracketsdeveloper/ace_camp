@@ -26,7 +26,13 @@ const defaultNewProduct: Partial<Product> = {
   backupProductId: null,
   categoryIds: [],
   priceSlabs: [],
-  bulkBuy: false, // ✅ NEW
+  bulkBuy: false,
+  // ✅ NEW
+  gst: "0",
+  stockStatus: "non_committed",
+  brandStore: false,
+  brand: "",
+  sizes: { unit: "", values: [] },
 };
 
 function normalizeSlabs(slabs: PriceSlab[]): PriceSlab[] {
@@ -61,6 +67,8 @@ export function ProductCreate() {
   const [colorsInput, setColorsInput] = useState<string>("");
   const [packagesInput, setPackagesInput] = useState<string>("");
   const [specificationsInput, setSpecificationsInput] = useState<string>("");
+  const [sizeUnit, setSizeUnit] = useState<string>("");
+  const [sizeValuesInput, setSizeValuesInput] = useState<string>("");
 
   const [priceSlabs, setPriceSlabs] = useState<PriceSlab[]>([]);
 
@@ -86,6 +94,8 @@ export function ProductCreate() {
       setColorsInput("");
       setPackagesInput("");
       setSpecificationsInput("");
+      setSizeUnit("");
+      setSizeValuesInput("");
       setPriceSlabs([]);
     },
     onError: (e: any) =>
@@ -228,7 +238,17 @@ export function ProductCreate() {
       backupProductId: newProduct.backupProductId || null,
       isActive: newProduct.isActive !== false,
       csrSupport: newProduct.csrSupport || false,
-      bulkBuy: Boolean(newProduct.bulkBuy), // ✅ NEW
+      bulkBuy: Boolean(newProduct.bulkBuy),
+      // ✅ NEW
+      gst: newProduct.gst || "0",
+      stockStatus: (newProduct.stockStatus as any) || "non_committed",
+      brandStore: Boolean(newProduct.brandStore),
+      brand: newProduct.brand?.trim() || "",
+      sizes: sizeUnit ? {
+        unit: sizeUnit.trim(),
+        values: sizeValuesInput.split(",").map(v => v.trim()).filter(Boolean)
+      } : null,
+
       images: newProductImages,
       colors: colorsInput.split(",").map((s) => s.trim()).filter(Boolean),
       packagesInclude: packagesInput.split("\n").map((s) => s.trim()).filter(Boolean),
@@ -273,6 +293,17 @@ export function ProductCreate() {
             <p className="text-xs text-muted-foreground mt-1">
               Used when slab pricing is not applicable (or as the default tier).
             </p>
+          </div>
+
+          {/* GST */}
+          <div>
+            <Label htmlFor="product-gst">GST (%)</Label>
+            <Input
+              id="product-gst"
+              value={newProduct.gst || ""}
+              onChange={(e) => setNewProduct((p) => ({ ...p, gst: e.target.value }))}
+              placeholder="e.g. 18"
+            />
           </div>
 
           {/* ✅ NEW: Bulk Buy flag */}
@@ -326,6 +357,56 @@ export function ProductCreate() {
                 Selected categories: {selectedCategoryIds.length}
               </p>
             )}
+          </div>
+
+          {/* ✅ NEW: Brand Store flag */}
+          <div className="md:col-span-2">
+            <Label>Brand Store</Label>
+            <div className="flex items-center gap-2 mt-2">
+              <input
+                id="brandStore"
+                type="checkbox"
+                className="h-4 w-4"
+                checked={Boolean(newProduct.brandStore)}
+                onChange={(e) => setNewProduct((p) => ({ ...p, brandStore: e.target.checked }))}
+              />
+              <Label htmlFor="brandStore" className="text-sm">
+                Show this product in Brand Store
+              </Label>
+            </div>
+          </div>
+
+          {/* Brand */}
+          <div>
+            <Label htmlFor="product-brand">Brand Name</Label>
+            <Input
+              id="product-brand"
+              value={newProduct.brand || ""}
+              onChange={(e) => setNewProduct((p) => ({ ...p, brand: e.target.value }))}
+              placeholder="Enter brand name"
+            />
+          </div>
+
+          {/* Sizes */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="size-unit">Size Unit</Label>
+              <Input
+                id="size-unit"
+                value={sizeUnit}
+                onChange={(e) => setSizeUnit(e.target.value)}
+                placeholder="e.g. UK, EU, US"
+              />
+            </div>
+            <div>
+              <Label htmlFor="size-values">Sizes (comma-separated)</Label>
+              <Input
+                id="size-values"
+                value={sizeValuesInput}
+                onChange={(e) => setSizeValuesInput(e.target.value)}
+                placeholder="e.g. 7, 8, 9, 10"
+              />
+            </div>
           </div>
 
           {/* SKU */}
@@ -422,7 +503,7 @@ export function ProductCreate() {
 
           {/* Stock */}
           <div>
-            <Label htmlFor="product-stock">Stock</Label>
+            <Label htmlFor="product-stock">Total Stock</Label>
             <Input
               id="product-stock"
               type="number"
@@ -431,6 +512,36 @@ export function ProductCreate() {
               onChange={(e) => setNewProduct((p) => ({ ...p, stock: Number(e.target.value) || 0 }))}
               placeholder="0"
             />
+          </div>
+
+
+          {/* Stock Status */}
+          <div>
+            <Label>Stock Status</Label>
+            <div className="flex items-center gap-4 mt-2">
+              <label className="flex items-center gap-2 text-sm border p-2 rounded cursor-pointer">
+                <input
+                  type="radio"
+                  name="stockStatus"
+                  value="committed"
+                  checked={newProduct.stockStatus === "committed"}
+                  onChange={() => setNewProduct((p) => ({ ...p, stockStatus: "committed" }))}
+                  className="h-4 w-4"
+                />
+                Committed
+              </label>
+              <label className="flex items-center gap-2 text-sm border p-2 rounded cursor-pointer">
+                <input
+                  type="radio"
+                  name="stockStatus"
+                  value="non_committed"
+                  checked={newProduct.stockStatus !== "committed"}
+                  onChange={() => setNewProduct((p) => ({ ...p, stockStatus: "non_committed" }))}
+                  className="h-4 w-4"
+                />
+                Non-Committed
+              </label>
+            </div>
           </div>
 
           {/* Slab Pricing */}
@@ -516,13 +627,13 @@ export function ProductCreate() {
                   slabValidation.multipleOpenEnded ||
                   slabValidation.hasOverlap ||
                   slabValidation.badPrice) && (
-                  <div className="text-sm text-red-500">
-                    {slabValidation.badRange && <div>• Max Qty must be empty or ≥ Min Qty.</div>}
-                    {slabValidation.multipleOpenEnded && <div>• Only one open-ended slab is allowed.</div>}
-                    {slabValidation.hasOverlap && <div>• Slab ranges overlap. Fix the ranges.</div>}
-                    {slabValidation.badPrice && <div>• Invalid price in one or more slabs (must be number ≥ 0).</div>}
-                  </div>
-                )}
+                    <div className="text-sm text-red-500">
+                      {slabValidation.badRange && <div>• Max Qty must be empty or ≥ Min Qty.</div>}
+                      {slabValidation.multipleOpenEnded && <div>• Only one open-ended slab is allowed.</div>}
+                      {slabValidation.hasOverlap && <div>• Slab ranges overlap. Fix the ranges.</div>}
+                      {slabValidation.badPrice && <div>• Invalid price in one or more slabs (must be number ≥ 0).</div>}
+                    </div>
+                  )}
               </div>
             )}
           </div>
@@ -617,6 +728,6 @@ export function ProductCreate() {
           </Button>
         </div>
       </CardContent>
-    </Card>
+    </Card >
   );
 }

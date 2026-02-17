@@ -16,9 +16,16 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { ShoppingCart, Trash2, Plus, Minus, MapPin, Building } from "lucide-react";
+import { Plus, Minus, MapPin, Building, ShoppingCart, Trash2 } from "lucide-react";
 import { SimplePrompt } from "./dashboard";
 import { useLocation } from "wouter";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 function getQueryParam(name: string): string | null {
   if (typeof window === "undefined") return null;
@@ -70,19 +77,19 @@ export default function Cart() {
 
   const [, setLocation] = useLocation();
 
-  const { data: cartItems = [] } = useQuery({
+  const { data: cartItems = [] } = useQuery<any[]>({
     queryKey: ["/api/cart"],
     enabled: !!token,
   });
 
-  const { data: branding } = useQuery({
+  const { data: branding } = useQuery<any>({
     queryKey: ["/api/admin/branding"],
   });
 
   const inrPerPoint = parseFloat(branding?.inrPerPoint || "1");
   const maxSelections = branding?.maxSelectionsPerUser ?? 1;
 
-  const { data: myOrders = [] } = useQuery({
+  const { data: myOrders = [] } = useQuery<any[]>({
     queryKey: ["/api/orders/my-orders"],
     retry: false,
     enabled: !!token,
@@ -140,6 +147,16 @@ export default function Cart() {
     return baseUnitSafe * q;
   };
 
+  const groupedItems = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    cartItems.forEach((item: any) => {
+      const key = item.campaignId ? item.campaignId : "standard";
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(item);
+    });
+    return groups;
+  }, [cartItems]);
+
   const totalPointsRequired = useMemo(() => {
     return cartItems.reduce((sum: number, item: any) => {
       const linePriceInr = getLinePriceInr(item.product, item.quantity);
@@ -189,6 +206,27 @@ export default function Cart() {
         body: JSON.stringify({ quantity }),
       });
       if (!response.ok) throw new Error("Failed to update quantity");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const updateCartItemAttributesMutation = useMutation({
+    mutationFn: async ({ id, selectedColor, selectedSize }: { id: string; selectedColor?: string; selectedSize?: string }) => {
+      const response = await fetch(`/api/cart/${id}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ selectedColor, selectedSize }),
+      });
+      if (!response.ok) throw new Error("Failed to update cart item");
       return response.json();
     },
     onSuccess: () => {
@@ -433,83 +471,156 @@ export default function Cart() {
           </div>
         ) : (
           <>
-            <div className="space-y-6 mb-8">
-              {cartItems.map((item: any) => {
-                const linePriceInr = getLinePriceInr(item.product, item.quantity);
-                const linePoints = Math.ceil(linePriceInr / inrPerPoint);
-                const perUnitPrice = linePriceInr / Math.max(1, item.quantity);
-                const pointsEach = Math.ceil(perUnitPrice / inrPerPoint);
+            <div className="space-y-8 mb-8">
+              {Object.entries(groupedItems).map(([key, items]) => {
+                const isCampaign = key !== "standard";
+                const campaignName = isCampaign ? items[0].campaign?.name : "Standard Catalog";
 
                 return (
-                  <div
-                    key={item.id}
-                    className="flex items-center space-x-4 bg-card p-4 rounded-lg shadow-sm"
-                  >
-                    <img
-                      src={item.product.images[0]}
-                      alt={item.product.name}
-                      className="w-20 h-20 object-cover rounded"
-                    />
-                    <div className="flex-1">
-                      <h3 className="font-semibold">{item.product.name}</h3>
-                      <p className="text-sm text-muted-foreground">
-                        {item.selectedColor && `Color: ${item.selectedColor}`}
-                      </p>
-                      <p className="text-sm text-muted-foreground">{pointsEach} points each</p>
-                      <p className="text-sm text-muted-foreground">Total: {linePoints} points</p>
+                  <div key={key} className="border rounded-lg p-6 bg-card/50">
+                    <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                      {isCampaign ? "🎉" : "🛒"} {campaignName}
+                      {isCampaign && <span className="text-xs font-normal text-muted-foreground bg-muted px-2 py-1 rounded">Campaign</span>}
+                    </h2>
+                    <div className="space-y-4">
+                      {items.map((item: any) => {
+                        const linePriceInr = getLinePriceInr(item.product, item.quantity);
+                        const linePoints = Math.ceil(linePriceInr / inrPerPoint);
+                        const perUnitPrice = linePriceInr / Math.max(1, item.quantity);
+                        const pointsEach = Math.ceil(perUnitPrice / inrPerPoint);
+
+                        return (
+                          <div
+                            key={item.id}
+                            className="flex items-center space-x-4 bg-card p-4 rounded-lg shadow-sm"
+                          >
+                            <img
+                              src={item.product.images[0]}
+                              alt={item.product.name}
+                              className="w-20 h-20 object-cover rounded"
+                            />
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-lg">{item.product.name}</h3>
+                              <div className="flex flex-wrap gap-x-4 gap-y-2 mt-2">
+                                {/* Color Selection */}
+                                {item.product.colors?.length > 0 ? (
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-sm text-muted-foreground">Color:</span>
+                                    {item.selectedColor ? (
+                                      <span className="font-medium text-foreground text-sm">{item.selectedColor}</span>
+                                    ) : (
+                                      <Select
+                                        onValueChange={(val) =>
+                                          updateCartItemAttributesMutation.mutate({
+                                            id: item.id,
+                                            selectedColor: val,
+                                            selectedSize: item.selectedSize // preserve existing
+                                          })
+                                        }
+                                      >
+                                        <SelectTrigger className="w-[100px] h-8 text-xs border-red-300">
+                                          <SelectValue placeholder="Select Color" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {item.product.colors.map((c: string) => (
+                                            <SelectItem key={c} value={c}>{c}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    )}
+                                  </div>
+                                ) : null}
+
+                                {/* Size Selection */}
+                                {item.product.sizes?.values?.length > 0 ? (
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-sm text-muted-foreground">Size:</span>
+                                    {(item.selectedSize || item.selected_size) ? (
+                                      <span className="font-bold text-blue-600 text-sm">{item.selectedSize || item.selected_size}</span>
+                                    ) : (
+                                      <Select
+                                        onValueChange={(val) =>
+                                          updateCartItemAttributesMutation.mutate({
+                                            id: item.id,
+                                            selectedSize: val,
+                                            selectedColor: item.selectedColor // preserve existing
+                                          })
+                                        }
+                                      >
+                                        <SelectTrigger className="w-[80px] h-8 text-xs border-red-300">
+                                          <SelectValue placeholder="Select Size" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {item.product.sizes.values.map((s: string) => (
+                                            <SelectItem key={s} value={s}>{s}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    )}
+                                  </div>
+                                ) : null}
+                              </div>
+                              <div className="flex items-center gap-4 mt-2">
+                                <p className="text-sm font-medium">{pointsEach} points each</p>
+                                <p className="text-sm font-bold text-primary">Total: {linePoints} points</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center space-x-2">
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                onClick={() =>
+                                  updateQuantityMutation.mutate({
+                                    id: item.id,
+                                    quantity: item.quantity - 1,
+                                  })
+                                }
+                                disabled={item.quantity <= 1}
+                              >
+                                <Minus className="h-4 w-4" />
+                              </Button>
+
+                              <Input
+                                type="number"
+                                className="w-16 text-center"
+                                value={item.quantity}
+                                onChange={(e) =>
+                                  updateQuantityMutation.mutate({
+                                    id: item.id,
+                                    quantity: parseInt(e.target.value) || 1,
+                                  })
+                                }
+                                min={1}
+                                max={item.product.stock}
+                              />
+
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                onClick={() =>
+                                  updateQuantityMutation.mutate({
+                                    id: item.id,
+                                    quantity: item.quantity + 1,
+                                  })
+                                }
+                                disabled={item.quantity >= item.product.stock}
+                              >
+                                <Plus className="h-4 w-4" />
+                              </Button>
+                            </div>
+
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => removeItemMutation.mutate(item.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        );
+                      })}
                     </div>
-
-                    <div className="flex items-center space-x-2">
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        onClick={() =>
-                          updateQuantityMutation.mutate({
-                            id: item.id,
-                            quantity: item.quantity - 1,
-                          })
-                        }
-                        disabled={item.quantity <= 1}
-                      >
-                        <Minus className="h-4 w-4" />
-                      </Button>
-
-                      <Input
-                        type="number"
-                        className="w-16 text-center"
-                        value={item.quantity}
-                        onChange={(e) =>
-                          updateQuantityMutation.mutate({
-                            id: item.id,
-                            quantity: parseInt(e.target.value) || 1,
-                          })
-                        }
-                        min={1}
-                        max={item.product.stock}
-                      />
-
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        onClick={() =>
-                          updateQuantityMutation.mutate({
-                            id: item.id,
-                            quantity: item.quantity + 1,
-                          })
-                        }
-                        disabled={item.quantity >= item.product.stock}
-                      >
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                    </div>
-
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeItemMutation.mutate(item.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
                   </div>
                 );
               })}

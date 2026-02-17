@@ -20,6 +20,7 @@ export function CampaignCreate() {
     isActive: true,
     startDate: "",
     endDate: "",
+    maxProductsPerUser: "",
   });
   const [imageUploading, setImageUploading] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -40,15 +41,16 @@ export function CampaignCreate() {
         isActive: true,
         startDate: "",
         endDate: "",
+        maxProductsPerUser: "",
       });
       setImageFile(null);
       setImagePreview("");
     },
     onError: (e: any) => {
-      toast({ 
-        title: "Create failed", 
-        description: e.message, 
-        variant: "destructive" 
+      toast({
+        title: "Create failed",
+        description: e.message,
+        variant: "destructive"
       });
     },
   });
@@ -60,10 +62,10 @@ export function CampaignCreate() {
       setFormData(prev => ({ ...prev, imageUrl: url }));
       toast({ title: "Image uploaded successfully" });
     } catch (err: any) {
-      toast({ 
-        title: "Image upload failed", 
-        description: err.message, 
-        variant: "destructive" 
+      toast({
+        title: "Image upload failed",
+        description: err.message,
+        variant: "destructive"
       });
     } finally {
       setImageUploading(false);
@@ -74,26 +76,26 @@ export function CampaignCreate() {
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 10 * 1024 * 1024) {
-        toast({ 
-          title: "File too large", 
-          description: "Maximum file size is 10MB", 
-          variant: "destructive" 
+        toast({
+          title: "File too large",
+          description: "Maximum file size is 10MB",
+          variant: "destructive"
         });
         return;
       }
 
       const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
       if (!validTypes.includes(file.type)) {
-        toast({ 
-          title: "Invalid file type", 
-          description: "Only JPEG, PNG, WebP, and GIF images are allowed", 
-          variant: "destructive" 
+        toast({
+          title: "Invalid file type",
+          description: "Only JPEG, PNG, WebP, and GIF images are allowed",
+          variant: "destructive"
         });
         return;
       }
 
       setImageFile(file);
-      
+
       // Create preview
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -111,7 +113,7 @@ export function CampaignCreate() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.name.trim()) {
       toast({ title: "Name is required", variant: "destructive" });
       return;
@@ -126,10 +128,10 @@ export function CampaignCreate() {
         const [url] = await uploadFiles([imageFile]);
         finalImageUrl = url;
       } catch (err: any) {
-        toast({ 
-          title: "Image upload failed", 
-          description: err.message, 
-          variant: "destructive" 
+        toast({
+          title: "Image upload failed",
+          description: err.message,
+          variant: "destructive"
         });
         setImageUploading(false);
         return;
@@ -144,6 +146,7 @@ export function CampaignCreate() {
       imageUrl: finalImageUrl,
       startDate: formData.startDate ? formData.startDate + ":00.000Z" : null,
       endDate: formData.endDate ? formData.endDate + ":00.000Z" : null,
+      maxProductsPerUser: formData.maxProductsPerUser ? parseInt(formData.maxProductsPerUser) : null,
     };
 
     createCampaignMutation.mutate(campaignData);
@@ -184,14 +187,13 @@ export function CampaignCreate() {
             {/* Image Upload */}
             <div className="md:col-span-2">
               <Label htmlFor="campaign-image">Campaign Image</Label>
-              
+
               <div className="flex flex-col gap-4">
                 {/* Upload Area */}
-                <div className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-                  imageUploading 
-                    ? "border-blue-500 bg-blue-50" 
-                    : "border-gray-300 hover:border-blue-400 hover:bg-gray-50"
-                }`}>
+                <div className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${imageUploading
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-gray-300 hover:border-blue-400 hover:bg-gray-50"
+                  }`}>
                   <div className="flex flex-col items-center">
                     <Upload className="h-12 w-12 text-gray-400 mb-3" />
                     <p className="text-sm text-gray-600 mb-2">
@@ -200,7 +202,7 @@ export function CampaignCreate() {
                     <p className="text-xs text-gray-500 mb-4">
                       PNG, JPG, WebP or GIF (max 10MB)
                     </p>
-                    
+
                     <div className="flex items-center gap-2">
                       <Button
                         type="button"
@@ -225,7 +227,7 @@ export function CampaignCreate() {
                         </Button>
                       )}
                     </div>
-                    
+
                     <input
                       id="file-upload"
                       type="file"
@@ -255,9 +257,9 @@ export function CampaignCreate() {
                         <div className="text-sm">
                           <p className="font-medium text-gray-700">Image Preview</p>
                           <p className="text-gray-600 mt-1">
-                            {imageFile 
+                            {imageFile
                               ? `Selected: ${imageFile.name} (${(imageFile.size / 1024 / 1024).toFixed(2)}MB)`
-                              : formData.imageUrl 
+                              : formData.imageUrl
                                 ? "Using URL: " + (formData.imageUrl.length > 50 ? formData.imageUrl.substring(0, 50) + "..." : formData.imageUrl)
                                 : "No image selected"
                             }
@@ -317,6 +319,22 @@ export function CampaignCreate() {
                 value={formData.endDate}
                 onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
               />
+            </div>
+
+            {/* Max Products per User */}
+            <div>
+              <Label htmlFor="max-products">Max Products per User (Optional)</Label>
+              <Input
+                id="max-products"
+                type="number"
+                min="1"
+                placeholder="Leave empty for unlimited"
+                value={formData.maxProductsPerUser}
+                onChange={(e) => setFormData({ ...formData, maxProductsPerUser: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Limit how many products a user can select/order from this campaign.
+              </p>
             </div>
 
             {/* Active Status */}

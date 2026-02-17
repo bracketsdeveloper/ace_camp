@@ -11,7 +11,7 @@ interface ProductCardProps {
 }
 
 export function ProductCard({ product, onView, onAddToCart }: ProductCardProps) {
-  const { data: branding } = useQuery({
+  const { data: branding } = useQuery<any>({
     queryKey: ["/api/admin/branding"],
   });
 
@@ -40,20 +40,20 @@ export function ProductCard({ product, onView, onAddToCart }: ProductCardProps) 
 
   return (
     <div onClick={handleCardClick}>
-      <Card 
-        className="hover-elevate active-elevate-2 cursor-pointer overflow-hidden border-0 shadow-sm hover:shadow-md transition-all duration-300" 
+      <Card
+        className="hover-elevate active-elevate-2 cursor-pointer overflow-hidden border-0 shadow-sm hover:shadow-md transition-all duration-300"
         data-testid={`card-product-${product.id}`}
       >
         <CardContent className="p-0">
           {/* Product Image */}
           <div className="aspect-square bg-gray-50 overflow-hidden relative">
-            <img 
-              src={mainImage} 
+            <img
+              src={mainImage}
               alt={product.name}
               className="w-full h-full object-cover transition-transform duration-300 hover:scale-105"
               data-testid={`img-product-${product.id}`}
             />
-            
+
             {/* Out of Stock Overlay */}
             {isOutOfStock && (
               <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
@@ -62,14 +62,14 @@ export function ProductCard({ product, onView, onAddToCart }: ProductCardProps) 
                 </div>
               </div>
             )}
-            
+
             {/* Backup Product Indicator */}
             {product.isBackup && (
               <div className="absolute top-2 left-2 bg-yellow-500 text-white text-xs px-2 py-1 rounded">
                 Backup
               </div>
             )}
-            
+
             {/* Quick Action Buttons */}
             <div className="absolute top-2 right-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
               <Button
@@ -84,7 +84,7 @@ export function ProductCard({ product, onView, onAddToCart }: ProductCardProps) 
               >
                 <Eye className="h-4 w-4" />
               </Button>
-              
+
               {!isOutOfStock && (
                 <Button
                   size="sm"
@@ -97,16 +97,21 @@ export function ProductCard({ product, onView, onAddToCart }: ProductCardProps) 
               )}
             </div>
           </div>
-          
+
           {/* Product Info */}
           <div className="p-4">
-            <h3 
-              className="font-medium text-base line-clamp-2 mb-2 text-gray-900" 
+            <h3
+              className="font-medium text-base line-clamp-2 mb-2 text-gray-900"
               data-testid={`text-product-name-${product.id}`}
             >
               {product.name}
             </h3>
-            
+            {product.brand && (
+              <p className="text-sm font-semibold text-blue-600 mb-2">
+                {product.brand}
+              </p>
+            )}
+
             {/* Color Options (if available) */}
             {product.colors && product.colors.length > 0 && (
               <div className="mb-3">
@@ -115,11 +120,10 @@ export function ProductCard({ product, onView, onAddToCart }: ProductCardProps) 
                   {product.colors.slice(0, 4).map((color: string) => (
                     <div
                       key={color}
-                      className={`w-4 h-4 rounded-full border border-gray-300 ${
-                        color.match(/^#[0-9A-Fa-f]{6}$/) 
-                          ? '' 
-                          : getColorClass(color)
-                      }`}
+                      className={`w-4 h-4 rounded-full border border-gray-300 ${color.match(/^#[0-9A-Fa-f]{6}$/)
+                        ? ''
+                        : getColorClass(color)
+                        }`}
                       style={color.match(/^#[0-9A-Fa-f]{6}$/) ? { backgroundColor: color } : {}}
                       title={color}
                     />
@@ -132,16 +136,16 @@ export function ProductCard({ product, onView, onAddToCart }: ProductCardProps) 
                 </div>
               </div>
             )}
-            
+
             {/* Price in Points */}
             <div className="flex items-center justify-between">
-              <p 
-                className="text-lg font-semibold text-blue-600" 
+              <p
+                className="text-lg font-semibold text-blue-600"
                 data-testid={`text-points-required-${product.id}`}
               >
                 {pointsRequired} points
               </p>
-              
+
               {/* Original Price (if available) */}
               {product.originalPrice && (
                 <p className="text-sm text-gray-500 line-through">
@@ -149,7 +153,7 @@ export function ProductCard({ product, onView, onAddToCart }: ProductCardProps) 
                 </p>
               )}
             </div>
-            
+
             {/* Stock Status */}
             <div className="mt-2">
               {isOutOfStock ? (
@@ -165,7 +169,7 @@ export function ProductCard({ product, onView, onAddToCart }: ProductCardProps) 
                 <p className="text-green-600 text-sm">In Stock</p>
               )}
             </div>
-            
+
             {/* Mobile Action Buttons (visible on mobile) */}
             <div className="flex space-x-2 mt-3 lg:hidden">
               <Button
@@ -180,7 +184,7 @@ export function ProductCard({ product, onView, onAddToCart }: ProductCardProps) 
                 <Eye className="h-4 w-4 mr-1" />
                 View
               </Button>
-              
+
               {!isOutOfStock && (
                 <Button
                   size="sm"
@@ -218,6 +222,6 @@ function getColorClass(color: string): string {
     gold: "bg-yellow-300",
     'rose-gold': "bg-gradient-to-br from-rose-300 to-amber-200",
   };
-  
+
   return colorMap[color.toLowerCase()] || "bg-gray-400";
 }

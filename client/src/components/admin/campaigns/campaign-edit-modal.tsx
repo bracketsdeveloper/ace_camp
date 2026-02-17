@@ -27,6 +27,7 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
     isActive: true,
     startDate: "",
     endDate: "",
+    maxProductsPerUser: "",
   });
   const [imageUploading, setImageUploading] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -47,8 +48,9 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
       isActive: campaign.isActive,
       startDate: formatDateForInput(campaign.startDate),
       endDate: formatDateForInput(campaign.endDate),
+      maxProductsPerUser: campaign.maxProductsPerUser ? String(campaign.maxProductsPerUser) : "",
     });
-    
+
     if (campaign.imageUrl) {
       setImagePreview(campaign.imageUrl);
     }
@@ -65,10 +67,10 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
       onClose();
     },
     onError: (e: any) => {
-      toast({ 
-        title: "Update failed", 
-        description: e.message, 
-        variant: "destructive" 
+      toast({
+        title: "Update failed",
+        description: e.message,
+        variant: "destructive"
       });
     },
   });
@@ -80,10 +82,10 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
       setFormData(prev => ({ ...prev, imageUrl: url }));
       toast({ title: "Image uploaded successfully" });
     } catch (err: any) {
-      toast({ 
-        title: "Image upload failed", 
-        description: err.message, 
-        variant: "destructive" 
+      toast({
+        title: "Image upload failed",
+        description: err.message,
+        variant: "destructive"
       });
     } finally {
       setImageUploading(false);
@@ -94,26 +96,26 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 10 * 1024 * 1024) {
-        toast({ 
-          title: "File too large", 
-          description: "Maximum file size is 10MB", 
-          variant: "destructive" 
+        toast({
+          title: "File too large",
+          description: "Maximum file size is 10MB",
+          variant: "destructive"
         });
         return;
       }
 
       const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
       if (!validTypes.includes(file.type)) {
-        toast({ 
-          title: "Invalid file type", 
-          description: "Only JPEG, PNG, WebP, and GIF images are allowed", 
-          variant: "destructive" 
+        toast({
+          title: "Invalid file type",
+          description: "Only JPEG, PNG, WebP, and GIF images are allowed",
+          variant: "destructive"
         });
         return;
       }
 
       setImageFile(file);
-      
+
       // Create preview
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -131,7 +133,7 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.name.trim()) {
       toast({ title: "Name is required", variant: "destructive" });
       return;
@@ -146,10 +148,10 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
         const [url] = await uploadFiles([imageFile]);
         finalImageUrl = url;
       } catch (err: any) {
-        toast({ 
-          title: "Image upload failed", 
-          description: err.message, 
-          variant: "destructive" 
+        toast({
+          title: "Image upload failed",
+          description: err.message,
+          variant: "destructive"
         });
         setImageUploading(false);
         return;
@@ -163,6 +165,7 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
       imageUrl: finalImageUrl,
       startDate: formData.startDate ? formData.startDate + ":00.000Z" : null,
       endDate: formData.endDate ? formData.endDate + ":00.000Z" : null,
+      maxProductsPerUser: formData.maxProductsPerUser ? parseInt(formData.maxProductsPerUser) : null,
     };
 
     updateCampaignMutation.mutate(campaignData);
@@ -179,7 +182,7 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
               <DialogTitle className="text-xl font-bold">Edit Campaign</DialogTitle>
             </DialogHeader>
           </div>
-          
+
           {/* Scrollable Content Area */}
           <div className="flex-1 overflow-y-auto" style={{ maxHeight: 'calc(90vh - 140px)' }}>
             <div className="p-6">
@@ -211,14 +214,13 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
                 {/* Image Upload */}
                 <div className="md:col-span-2">
                   <Label htmlFor="campaign-image" className="text-sm font-medium">Campaign Image</Label>
-                  
+
                   <div className="flex flex-col gap-4 mt-2">
                     {/* Upload Area */}
-                    <div className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
-                      imageUploading 
-                        ? "border-blue-500 bg-blue-50" 
+                    <div className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors ${imageUploading
+                        ? "border-blue-500 bg-blue-50"
                         : "border-gray-300 hover:border-blue-400 hover:bg-gray-50"
-                    }`}>
+                      }`}>
                       <div className="flex flex-col items-center">
                         <Upload className="h-10 w-10 text-gray-400 mb-2" />
                         <p className="text-sm text-gray-600 mb-2">
@@ -227,7 +229,7 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
                         <p className="text-xs text-gray-500 mb-3">
                           PNG, JPG, WebP or GIF (max 10MB)
                         </p>
-                        
+
                         <div className="flex items-center gap-2">
                           <Button
                             type="button"
@@ -254,7 +256,7 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
                             </Button>
                           )}
                         </div>
-                        
+
                         <input
                           id="edit-file-upload"
                           type="file"
@@ -284,9 +286,9 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
                             <div className="text-sm">
                               <p className="font-medium text-gray-700">Image Preview</p>
                               <p className="text-gray-600 mt-1 text-xs break-words">
-                                {imageFile 
+                                {imageFile
                                   ? `Selected: ${imageFile.name} (${(imageFile.size / 1024 / 1024).toFixed(2)}MB)`
-                                  : formData.imageUrl 
+                                  : formData.imageUrl
                                     ? "Current image (upload new to replace)"
                                     : "No image selected"
                                 }
@@ -351,6 +353,20 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
                   />
                 </div>
 
+                {/* Max Products per User */}
+                <div>
+                  <Label htmlFor="edit-max-products" className="text-sm font-medium">Max Products per User (Optional)</Label>
+                  <Input
+                    id="edit-max-products"
+                    type="number"
+                    min="1"
+                    placeholder="Leave empty for unlimited"
+                    value={formData.maxProductsPerUser}
+                    onChange={(e) => setFormData({ ...formData, maxProductsPerUser: e.target.value })}
+                    className="mt-1"
+                  />
+                </div>
+
                 {/* Active Status */}
                 <div className="md:col-span-2">
                   <div className="flex items-center space-x-2">
@@ -364,13 +380,13 @@ export function CampaignEditModal({ campaign, onClose }: CampaignEditModalProps)
                     <Label htmlFor="edit-is-active" className="text-sm font-medium">Campaign is active</Label>
                   </div>
                 </div>
-                
+
                 {/* Add some padding at the bottom to ensure all fields are visible */}
                 <div className="md:col-span-2 h-4"></div>
               </div>
             </div>
           </div>
-          
+
           {/* Fixed Footer */}
           <div className="px-6 py-4 border-t bg-white">
             <div className="flex gap-2 justify-end">

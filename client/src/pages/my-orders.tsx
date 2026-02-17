@@ -95,8 +95,12 @@ export default function MyOrders() {
 
                     <div className="flex-1 text-left">
                       <h4 className="font-semibold">{product?.name || "-"}</h4>
-                      {order?.selectedColor && (
-                        <p className="text-muted-foreground">{order.selectedColor}</p>
+                      {(order?.selectedColor || order?.selectedSize) && (
+                        <p className="text-muted-foreground">
+                          {order?.selectedColor}
+                          {order?.selectedColor && order?.selectedSize && " | "}
+                          {order?.selectedSize && `Size: ${order?.selectedSize}`}
+                        </p>
                       )}
                       <p className="text-muted-foreground">Quantity: {order?.quantity ?? "-"}</p>
                     </div>

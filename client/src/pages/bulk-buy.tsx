@@ -1,3 +1,5 @@
+// src/pages/bulk-buy.tsx
+
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Header } from "@/components/layout/header";
@@ -15,6 +17,8 @@ type Product = {
   stock: number;
   bulkBuy?: boolean;
   priceSlabs?: Array<{ minQty: number; maxQty: number | null; price: string }>;
+  brand?: string;
+  sizes?: { unit: string; values: string[] } | null;
 };
 
 type BulkBuyRequest = {
@@ -52,9 +56,10 @@ export default function BulkBuyPage() {
   const [deliveryAddress, setDeliveryAddress] = useState<string>("");
   const [requesterNote, setRequesterNote] = useState<string>("");
 
-  // per-request controls (simple default values)
+  // per-product controls
   const [qtyByProduct, setQtyByProduct] = useState<Record<string, number>>({});
   const [colorByProduct, setColorByProduct] = useState<Record<string, string | null>>({});
+  const [sizeByProduct, setSizeByProduct] = useState<Record<string, string | null>>({});
 
   const authHeaders = useMemo(
     () => ({
@@ -103,12 +108,13 @@ export default function BulkBuyPage() {
     },
   });
 
-  // ✅ New: Request a single product (no cart)
+  // Request a single product (no cart)
   const requestProduct = useMutation({
     mutationFn: async (payload: {
       productId: string;
       quantity: number;
       selectedColor: string | null;
+      selectedSize: string | null;
       deliveryMethod: "office" | "delivery";
       deliveryAddress: string | null;
       requesterNote: string | null;
@@ -129,7 +135,6 @@ export default function BulkBuyPage() {
         description:
           data?.message || "Your request has been submitted to procurement team for approval.",
       });
-      // keep delivery settings (often reused), clear note
       setRequesterNote("");
     },
     onError: (e: any) =>
@@ -252,6 +257,11 @@ export default function BulkBuyPage() {
                     </div>
 
                     <div className="font-semibold">{p.name}</div>
+                    {p.brand && (
+                      <div className="text-xs font-semibold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded inline-block">
+                        {p.brand}
+                      </div>
+                    )}
                     <div className="text-sm text-muted-foreground">Base price: ₹{p.price}</div>
                     <div className="text-xs text-muted-foreground mt-1">Stock: {p.stock ?? 0}</div>
 
@@ -295,12 +305,45 @@ export default function BulkBuyPage() {
                           ))}
                         </select>
                       </div>
+
+                      {/* Sizes */}
+                      {p.sizes?.values?.length ? (
+                        <div className="col-span-2 space-y-1">
+                          <div className="text-sm font-medium">Size ({p.sizes.unit})</div>
+                          <div className="flex flex-wrap gap-2">
+                            {p.sizes.values.map((s) => {
+                              const selected = sizeByProduct[p.id] === s;
+                              return (
+                                <button
+                                  key={s}
+                                  type="button"
+                                  className={`px-3 py-1 text-xs border rounded-md transition-colors ${selected
+                                      ? "bg-blue-600 text-white border-blue-600"
+                                      : "bg-white hover:border-blue-400"
+                                    }`}
+                                  onClick={() =>
+                                    setSizeByProduct((prev) => ({ ...prev, [p.id]: s }))
+                                  }
+                                >
+                                  {s}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
 
                     {/* price calc */}
                     <div className="mt-3 text-sm text-muted-foreground">
                       Unit: ₹{calc.unit.toFixed(2)} • Total: ₹{calc.total.toFixed(2)}
                     </div>
+
+                    {Array.isArray(p.priceSlabs) && p.priceSlabs.length > 0 && (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Pricing applied based on slabs for qty {calc.qty}.
+                      </div>
+                    )}
 
                     <div className="mt-3 flex gap-2">
                       <Button
@@ -309,6 +352,7 @@ export default function BulkBuyPage() {
                             productId: p.id,
                             quantity: chosenQty,
                             selectedColor: chosenColor,
+                            selectedSize: sizeByProduct[p.id] || null,
                             deliveryMethod,
                             deliveryAddress: deliveryMethod === "delivery" ? deliveryAddress : null,
                             requesterNote: requesterNote || null,
@@ -318,6 +362,7 @@ export default function BulkBuyPage() {
                           requestProduct.isPending ||
                           outOfStock ||
                           qtyTooHigh ||
+                          (p.sizes?.values?.length ? !sizeByProduct[p.id] : false) ||
                           (deliveryMethod === "delivery" && !deliveryAddress.trim())
                         }
                       >
@@ -331,16 +376,59 @@ export default function BulkBuyPage() {
                       )}
                     </div>
 
+                    {/* ✅ Price slabs table */}
                     {Array.isArray(p.priceSlabs) && p.priceSlabs.length > 0 && (
-                      <div className="mt-3 text-xs text-muted-foreground">
-                        <div className="font-medium">Price slabs:</div>
-                        <ul className="list-disc pl-5">
-                          {p.priceSlabs.map((s, idx) => (
-                            <li key={idx}>
-                              {s.minQty} - {s.maxQty ?? "∞"} @ ₹{s.price}
-                            </li>
-                          ))}
-                        </ul>
+                      <div className="mt-3">
+                        <div className="text-xs text-muted-foreground font-medium mb-2">
+                          Price slabs
+                        </div>
+
+                        <div className="overflow-hidden rounded-lg border">
+                          <table className="w-full text-sm">
+                            <thead className="bg-muted">
+                              <tr>
+                                <th className="px-3 py-2 text-left font-medium">Min Qty</th>
+                                <th className="px-3 py-2 text-left font-medium">Max Qty</th>
+                                <th className="px-3 py-2 text-right font-medium">Unit Price</th>
+                              </tr>
+                            </thead>
+
+                            <tbody>
+                              {p.priceSlabs
+                                .slice()
+                                .sort(
+                                  (a, b) =>
+                                    Number(a.minQty) - Number(b.minQty) ||
+                                    (Number(a.maxQty ?? Number.POSITIVE_INFINITY) -
+                                      Number(b.maxQty ?? Number.POSITIVE_INFINITY))
+                                )
+                                .map((s, idx) => {
+                                  const min = Number(s.minQty);
+                                  const max =
+                                    s.maxQty === null
+                                      ? Number.POSITIVE_INFINITY
+                                      : Number(s.maxQty);
+
+                                  const qty = Math.max(1, Number(qtyByProduct[p.id] || 1));
+                                  const isActive = qty >= min && qty <= max;
+
+                                  return (
+                                    <tr key={idx} className={isActive ? "bg-muted/50" : ""}>
+                                      <td className="px-3 py-2">{s.minQty}</td>
+                                      <td className="px-3 py-2">{s.maxQty ?? "∞"}</td>
+                                      <td className="px-3 py-2 text-right">
+                                        ₹{Number(s.price).toFixed(2)}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div className="mt-2 text-xs text-muted-foreground">
+                          Enter a quantity above to auto-pick the matching slab price.
+                        </div>
                       </div>
                     )}
                   </div>
