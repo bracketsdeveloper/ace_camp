@@ -19,6 +19,7 @@ type Product = {
   priceSlabs?: Array<{ minQty: number; maxQty: number | null; price: string }>;
   brand?: string;
   sizes?: { unit: string; values: string[] } | null;
+  gst?: string;
 };
 
 type BulkBuyRequest = {
@@ -169,7 +170,14 @@ export default function BulkBuyPage() {
   const estimatedTotalForProduct = (p: Product) => {
     const qty = Math.max(1, Number(qtyByProduct[p.id] || 1));
     const unit = unitPriceForQty(p, qty);
-    return { qty, unit, total: unit * qty };
+    const baseTotal = unit * qty;
+
+    // Calculate GST
+    const gstPercent = parseFloat(p.gst || "0");
+    const gstAmount = baseTotal * (gstPercent / 100);
+    const totalWithGst = baseTotal + gstAmount;
+
+    return { qty, unit, baseTotal, gstAmount, totalWithGst, gstPercent };
   };
 
   return (
@@ -318,8 +326,8 @@ export default function BulkBuyPage() {
                                   key={s}
                                   type="button"
                                   className={`px-3 py-1 text-xs border rounded-md transition-colors ${selected
-                                      ? "bg-blue-600 text-white border-blue-600"
-                                      : "bg-white hover:border-blue-400"
+                                    ? "bg-blue-600 text-white border-blue-600"
+                                    : "bg-white hover:border-blue-400"
                                     }`}
                                   onClick={() =>
                                     setSizeByProduct((prev) => ({ ...prev, [p.id]: s }))
@@ -336,7 +344,11 @@ export default function BulkBuyPage() {
 
                     {/* price calc */}
                     <div className="mt-3 text-sm text-muted-foreground">
-                      Unit: ₹{calc.unit.toFixed(2)} • Total: ₹{calc.total.toFixed(2)}
+                      Unit: ₹{calc.unit.toFixed(2)} • Base: ₹{calc.baseTotal.toFixed(2)}
+                      <br />
+                      GST ({calc.gstPercent}%): ₹{calc.gstAmount.toFixed(2)}
+                      <br />
+                      <span className="font-semibold text-foreground">Total: ₹{calc.totalWithGst.toFixed(2)}</span>
                     </div>
 
                     {Array.isArray(p.priceSlabs) && p.priceSlabs.length > 0 && (

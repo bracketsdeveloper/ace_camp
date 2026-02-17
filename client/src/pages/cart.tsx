@@ -157,12 +157,37 @@ export default function Cart() {
     return groups;
   }, [cartItems]);
 
-  const totalPointsRequired = useMemo(() => {
-    return cartItems.reduce((sum: number, item: any) => {
+  const { totalPointsRequired, totalProductValue, totalGstAmount, totalAmountInr } = useMemo(() => {
+    let points = 0;
+    let prodValue = 0;
+    let gstAmt = 0;
+    let totalAmt = 0;
+
+    cartItems.forEach((item: any) => {
       const linePriceInr = getLinePriceInr(item.product, item.quantity);
-      const linePoints = Math.ceil(linePriceInr / inrPerPoint);
-      return sum + linePoints;
-    }, 0);
+      // linePriceInr from getLinePriceInr is usually the base price from the slab/unit price.
+      // We need to check if the price stored/calculated includes GST or if GST is added on top.
+      // Based on product-detail-modal, GST is added on top of `linePriceInr`.
+      // Let's assume `getLinePriceInr` returns the taxable value (base price).
+
+      const gstPercent = parseFloat(item.product.gst || "0");
+      const itemGst = linePriceInr * (gstPercent / 100);
+      const itemTotal = linePriceInr + itemGst;
+
+      const linePoints = Math.ceil(itemTotal / inrPerPoint);
+
+      points += linePoints;
+      prodValue += linePriceInr;
+      gstAmt += itemGst;
+      totalAmt += itemTotal;
+    });
+
+    return {
+      totalPointsRequired: points,
+      totalProductValue: prodValue,
+      totalGstAmount: gstAmt,
+      totalAmountInr: totalAmt
+    };
   }, [cartItems, inrPerPoint]);
 
   const userPoints = employee?.points ?? 0;
@@ -626,10 +651,23 @@ export default function Cart() {
               })}
             </div>
 
-            <div className="bg-card p-6 rounded-lg shadow-sm">
-              <div className="flex justify-between mb-4">
+            <div className="bg-card p-6 rounded-lg shadow-sm space-y-3">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Product Value:</span>
+                <span>₹{totalProductValue.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">GST Amount:</span>
+                <span>₹{totalGstAmount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-base font-semibold border-t pt-2">
+                <span>Total Amount:</span>
+                <span>₹{totalAmountInr.toFixed(2)}</span>
+              </div>
+
+              <div className="flex justify-between pt-2">
                 <span className="font-semibold">Total Points Required:</span>
-                <span>{totalPointsRequired}</span>
+                <span className="text-blue-600 font-bold">{totalPointsRequired}</span>
               </div>
               <div className="flex justify-between mb-4">
                 <span className="font-semibold">Your Points:</span>
